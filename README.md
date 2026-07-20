@@ -48,18 +48,33 @@ just "currently free."
 - **Live preview** while editing, with readable parse-error messages instead
   of a blank panel
 - **Per-diagram style picker** (Mermaid's built-in themes: Default, Neutral,
-  Forest, Dark)
+  Forest, Dark) — new diagrams default to Dark automatically when Jira
+  itself is in dark mode
+- **Per-node color picker**, for both flowcharts and state diagrams — pick a
+  node/state and set its fill, border, and text color without hand-typing
+  Mermaid's `style`/`classDef` syntax. Sequence, ER, pie, and gantt diagrams
+  don't get this picker: Mermaid itself has no per-element color mechanism
+  for them, not a gap in this app
+- **Dark mode**, following Jira's own light/dark/auto preference — one known
+  gap: two small Atlaskit-driven elements (the loading spinner and
+  warning/error banners) don't follow it, a deliberate tradeoff (see
+  `CLAUDE.md`) rather than an oversight
 - **Pan, zoom, and fullscreen** on rendered diagrams — mouse wheel to zoom,
-  drag to pan, on-canvas controls, and a fullscreen toggle
-- **Autosave** with a visible save-status indicator (debounced while typing,
-  immediate on structural changes like add/remove)
+  drag to pan, on-canvas controls, and a fullscreen toggle. A diagram's own
+  background (in the preview pane, inline, and fullscreen) always matches
+  its own chosen theme, independent of Jira's light/dark chrome, so text
+  stays legible regardless of which one is dark
+- **Autosave** with a visible save-status indicator (debounced while typing
+  or dragging a color picker, immediate on structural changes like
+  add/remove/reorder)
 - **Conflict detection**: if the diagrams were changed elsewhere while you
   were editing, you're warned and asked to choose, instead of one edit
   silently overwriting the other
 - **Confirm-before-delete plus undo**, so removing a diagram is never a
   one-click accident
-- **Reorder and collapse** diagrams — move them up/down, and collapse a
-  diagram to just its title when you don't need it expanded
+- **Reorder and collapse** diagrams — move them up/down (staying within a
+  diagram's own section if it's grouped, rather than stepping out of it),
+  and collapse a diagram to just its title when you don't need it expanded
 - **Named, collapsible sections**: give diagrams the same "Section" name to
   group them together, with a header you can collapse to hide the whole
   group at once
@@ -118,9 +133,10 @@ overwriting the other.
 </td>
 <td width="50%">
 
-**Rendered diagram** — custom per-node colors (via Mermaid's `style
-nodeId fill:#...` syntax) rendering correctly despite Forge's CSP normally
-blocking exactly this kind of styling.
+**Rendered diagram** — custom per-node colors (settable via the color
+picker, or by hand-typing Mermaid's `style nodeId fill:#...` syntax)
+rendering correctly despite Forge's CSP normally blocking exactly this kind
+of styling.
 
 ![A flowchart with custom-colored nodes: green Start, red Error Handler, blue Database, orange Cache Layer, purple Return Result](docs/media/flowchart_image.png)
 
@@ -205,11 +221,13 @@ npm test
 ```
 
 Runs pure-logic unit tests (Node's built-in test runner — no extra
-dependency) covering the diagram-id/theme/error-message helpers and the
-snapshot-comparison logic behind conflict detection. UI/rendering code isn't
-unit tested; verify that in a real browser instead, for the CSP reasons
-above. CI (`.github/workflows/ci.yml`) runs `npm test` and `npm run build`
-on every push and pull request.
+dependency) covering the diagram-id/theme/error-message helpers, the
+render-grouping and reorder logic, the flowchart/state-diagram node-id
+parsing and style-directive read/write logic behind the color picker, and
+the snapshot-comparison logic behind conflict detection. UI/rendering code
+isn't unit tested; verify that in a real browser instead, for the CSP
+reasons above. CI (`.github/workflows/ci.yml`) runs `npm test` and
+`npm run build` on every push and pull request.
 
 ## Troubleshooting
 
@@ -231,13 +249,16 @@ on every push and pull request.
 
 This is an actively-developed project, not a polished 1.0. Current gaps:
 
-- No dark-mode/theme parity with Jira's own UI
-- Reordering moves a diagram by its position in the overall list, not by
-  position within its section — moving a grouped diagram up/down can step it
-  across a section boundary rather than staying inside the group
-- Custom colors work via Mermaid's own `style nodeId fill:#...` syntax
-  typed directly into the source, but there's no color-picker UI for it —
-  only the built-in theme picker (Default/Neutral/Forest/Dark) has one
+- Two small Atlaskit-driven UI elements (the loading spinner and
+  warning/error banners) don't follow Jira's dark mode — pinning them to it
+  would mean depending on Atlaskit's undocumented internal CSS variable
+  names rather than a supported API, judged not worth the fragility for two
+  transient, situational elements. Everything else (buttons, inputs, card
+  chrome, diagram surfaces) does follow it
+- The per-node color picker only appears for flowcharts and state diagrams
+  — Mermaid itself has no per-node/participant color mechanism for
+  sequence, ER, pie, or gantt diagrams (verified against the real parser,
+  not assumed), so there's nothing to build a picker around for those types
 - Only pure-logic unit tests — no UI/rendering or resolver-integration tests
 - All diagrams for an issue share a single Jira entity property, which has a
   32 KB size limit (the app warns you as you approach it, and blocks a save

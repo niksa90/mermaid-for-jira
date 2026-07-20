@@ -3,7 +3,11 @@
    components rely on at runtime (see mermaid-native/CLAUDE.md), so their
    visuals don't survive here. Everything below is plain CSS shipped as a
    real stylesheet via MiniCssExtractPlugin, which *is* CSP-safe. Colors
-   are a hand-picked approximation of Jira's current design language. */
+   are a hand-picked approximation of Jira's current design language,
+   cross-checked against @atlaskit/tokens' static `atlassian-light`/
+   `atlassian-dark` value tables (not consumed at runtime — just used as a
+   reference while hand-picking hex values, same as the light palette
+   already was). */
 :root {
   --color-primary: #0c66e4;
   --color-primary-hover: #0055cc;
@@ -27,14 +31,57 @@
 
   --color-success-text: #216e4e;
 
+  --color-page-bg: #ffffff;
+  --color-input-bg: #ffffff;
+  --color-overlay-bg: rgba(255, 255, 255, 0.92);
+
   --radius-sm: 3px;
   --radius-md: 6px;
   --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
 
+/* Dark-mode palette — driven purely by data (no runtime style injection,
+   so this doesn't run into the CSP issue documented for Atlaskit's
+   Button/TextField in CLAUDE.md). `@forge/bridge`'s `view.getContext()`
+   returns `theme.colorMode` ('light' | 'dark' | 'auto', or absent on
+   older bridge versions); App.jsx resolves that down to a plain boolean
+   (falling back to the OS-level prefers-color-scheme signal for
+   'auto'/absent) and always sets `<html data-color-mode="light"|"dark">`
+   explicitly — so this single attribute selector is the only place the
+   dark palette needs to be defined, rather than also keeping a parallel
+   `@media (prefers-color-scheme: dark)` block in sync by hand. */
+:root[data-color-mode='dark'] {
+  --color-primary: #579dff;
+  --color-primary-hover: #85b8ff;
+  --color-primary-active: #cce0ff;
+  --color-on-primary: #1d2125;
+
+  --color-subtle-bg: #2c333a;
+  --color-subtle-bg-hover: #38414a;
+  --color-subtle-bg-active: #454f59;
+
+  --color-danger-bg: #f87168;
+  --color-danger-bg-hover: #42221f;
+  --color-danger-bg-solid-hover: #fd9891;
+  --color-danger-text: #fd9891;
+
+  --color-border: #333b43;
+  --color-border-focus: #85b8ff;
+
+  --color-text: #b6c2cf;
+  --color-text-subtle: #8c9bab;
+
+  --color-success-text: #7ee2b8;
+
+  --color-page-bg: #1d2125;
+  --color-input-bg: #22272b;
+  --color-overlay-bg: rgba(29, 33, 37, 0.92);
+}
+
 body {
   margin: 0;
   color: var(--color-text);
+  background: var(--color-page-bg);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
@@ -108,7 +155,7 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   margin-bottom: 12px;
-  background: #fff;
+  background: var(--color-page-bg);
   overflow: hidden;
 }
 
@@ -118,7 +165,7 @@ body {
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
-  background: #fafbfc;
+  background: var(--color-subtle-bg);
 }
 
 .diagram-title {
@@ -194,6 +241,42 @@ body {
   flex: none;
 }
 
+.node-style-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.node-color-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+}
+
+.node-color-input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+}
+
+.node-color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.node-color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
 .editor-split {
   display: flex;
   gap: 12px;
@@ -226,9 +309,6 @@ body {
 }
 
 .preview-pane {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: #fafbfc;
   height: 320px;
   overflow: hidden;
   position: relative;
@@ -244,11 +324,30 @@ body {
 
 /* Pan/zoom canvas — see DiagramCanvas.jsx. Height comes from the parent
    (.preview-pane or the display rule above); dragging replaces the native
-   scrollbar a plain overflow:auto box would otherwise show. */
+   scrollbar a plain overflow:auto box would otherwise show.
+
+   The background/border here is keyed to the *diagram's own* Mermaid
+   theme (via the data-surface attribute DiagramCanvas.jsx sets from
+   isDarkMermaidTheme), not to Jira's light/dark chrome — a diagram using
+   one of the light Mermaid themes (default/neutral/forest) assumes a
+   light backdrop for its text/edge-label colors to stay legible regardless
+   of whether the surrounding panel chrome is in dark mode, and vice versa
+   for the 'dark' Mermaid theme. Giving every diagram this matting also
+   reads as an intentionally "framed" card rather than a stray white patch
+   when the diagram's theme and the chrome's color mode don't match. */
 .diagram-canvas-wrap {
   position: relative;
   width: 100%;
   height: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fafbfc;
+}
+
+.diagram-canvas-wrap[data-surface='dark'] {
+  background: #22272b;
+  border-color: #454f59;
 }
 
 .diagram-canvas {
@@ -269,14 +368,17 @@ body {
    transform/filter/contain, which are the only things that would trap a
    fixed-position descendant). True browser Fullscreen API is layered on
    top of this on a best-effort basis in DiagramCanvas.jsx; when it isn't
-   available this class alone still reads as "fullscreen" within the panel. */
+   available this class alone still reads as "fullscreen" within the panel.
+   Background still comes from the base .diagram-canvas-wrap rule above
+   (keyed to the diagram's own theme) — a card border makes no sense at
+   this size, so only that's overridden here. */
 .diagram-canvas-wrap-fullscreen {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: #fff;
   padding: 12px;
-  box-sizing: border-box;
+  border: none;
+  border-radius: 0;
 }
 
 .diagram-canvas svg {
@@ -292,7 +394,7 @@ body {
   display: flex;
   gap: 4px;
   padding: 4px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--color-overlay-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
 }
@@ -405,7 +507,7 @@ body {
   height: 32px;
   padding: 0 8px;
   box-sizing: border-box;
-  background: #fff;
+  background: var(--color-input-bg);
 }
 
 .text-input:focus,

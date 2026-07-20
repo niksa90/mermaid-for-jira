@@ -6,6 +6,7 @@ import {
   readableParseError,
   parseInlineStyleAttr,
   MERMAID_THEMES,
+  isDarkMermaidTheme,
 } from './mermaid-renderer.js';
 
 test('withTheme leaves source untouched for the default theme', () => {
@@ -24,6 +25,13 @@ test('withTheme prepends an init directive for non-default themes', () => {
 test('withTheme trims and handles empty source', () => {
   assert.equal(withTheme('   ', 'dark'), '');
   assert.equal(withTheme('', 'default'), '');
+});
+
+test('isDarkMermaidTheme is true only for the "dark" theme', () => {
+  assert.equal(isDarkMermaidTheme('dark'), true);
+  assert.equal(isDarkMermaidTheme('default'), false);
+  assert.equal(isDarkMermaidTheme('neutral'), false);
+  assert.equal(isDarkMermaidTheme('forest'), false);
 });
 
 test('every exposed theme is a real option, not the blank-slate "base" theme', () => {

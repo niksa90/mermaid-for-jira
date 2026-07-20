@@ -54,6 +54,18 @@ export function withTheme(source, theme) {
 }
 
 /**
+ * Whether a diagram's chosen Mermaid theme renders on a dark canvas
+ * ('dark' is the only one of MERMAID_THEMES that does). Used to give the
+ * diagram's own surface (preview pane, fullscreen backdrop) a matching
+ * light/dark background — independent of Jira's own light/dark chrome —
+ * so diagram text stays legible against its immediate backdrop regardless
+ * of which theme the diagram's author picked.
+ */
+export function isDarkMermaidTheme(theme) {
+  return theme === 'dark';
+}
+
+/**
  * Renders Mermaid source to an SVG string. Throws with a readable message on
  * parse/syntax errors so callers can show an inline error instead of a blank
  * panel.
@@ -124,35 +136,71 @@ function inlineSvgStyles(svgString) {
     const svgEl = doc.documentElement;
     if (!svgEl || svgEl.nodeName === 'parsererror') return svgString;
 
+    function applyToSelector(selectorText, declarations, forceOverwrite) {
+      for (const selector of selectorText.split(',')) {
+        let matches;
+        try {
+          matches = doc.querySelectorAll(selector.trim());
+        } catch {
+          continue; // skip selectors the fragment can't evaluate (e.g. :root)
+        }
+        matches.forEach((el) => {
+          declarations.forEach(([attr, value]) => {
+            // Don't clobber an attribute the diagram itself set intentionally
+            // (unless this declaration is !important — see below).
+            if (forceOverwrite || !el.hasAttribute(attr)) el.setAttribute(attr, value);
+          });
+        });
+      }
+    }
+
     const styleEls = Array.from(doc.querySelectorAll('style'));
     if (styleEls.length > 0) {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(styleEls.map((el) => el.textContent).join('\n'));
 
+      // !important rules are deferred to a second pass that always
+      // overwrites, applied after every normal rule — matching real CSS
+      // cascade semantics where !important wins regardless of source order
+      // or specificity. This matters concretely for classDef/class-based
+      // per-state coloring (state-style.js): Mermaid always emits that as
+      // !important precisely so it beats the base theme's own generic
+      // node/shape rules, which appear earlier in the stylesheet and would
+      // otherwise claim `fill`/`stroke` first under a plain first-write-wins
+      // scan, silently discarding the override.
+      const importantRules = [];
+
       for (const rule of sheet.cssRules) {
         if (!rule.selectorText) continue;
         const declarations = [];
+        const importantDeclarations = [];
         for (const prop of rule.style) {
           const attr = STYLE_PROPS_TO_ATTRS[prop];
-          if (attr) declarations.push([attr, rule.style.getPropertyValue(prop)]);
-        }
-        if (declarations.length === 0) continue;
-
-        for (const selector of rule.selectorText.split(',')) {
-          let matches;
-          try {
-            matches = doc.querySelectorAll(selector.trim());
-          } catch {
-            continue; // skip selectors the fragment can't evaluate (e.g. :root)
+          if (!attr) continue;
+          // Defensive: some CSSOM implementations return the literal
+          // "!important" suffix as part of getPropertyValue()'s result
+          // rather than stripping it (getPropertyPriority() is supposed to
+          // be the only place it surfaces) — left in, it'd become part of
+          // an SVG attribute value, which isn't valid syntax there and
+          // would render as a broken/default fill instead of the color
+          // that was actually requested.
+          const value = rule.style.getPropertyValue(prop).replace(/\s*!important\s*$/i, '');
+          if (rule.style.getPropertyPriority(prop) === 'important') {
+            importantDeclarations.push([attr, value]);
+          } else {
+            declarations.push([attr, value]);
           }
-          matches.forEach((el) => {
-            declarations.forEach(([attr, value]) => {
-              // Don't clobber an attribute the diagram itself set intentionally.
-              if (!el.hasAttribute(attr)) el.setAttribute(attr, value);
-            });
-          });
+        }
+        if (declarations.length > 0) applyToSelector(rule.selectorText, declarations, false);
+        if (importantDeclarations.length > 0) {
+          importantRules.push([rule.selectorText, importantDeclarations]);
         }
       }
+
+      importantRules.forEach(([selectorText, importantDeclarations]) => {
+        applyToSelector(selectorText, importantDeclarations, true);
+      });
+
       styleEls.forEach((el) => el.remove());
     }
 

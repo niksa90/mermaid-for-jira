@@ -45,5 +45,5 @@ export default function DiagramView({ source, theme = 'default', idPrefix = 'dia
     );
   }
 
-  return <DiagramCanvas svg={svg} />;
+  return <DiagramCanvas svg={svg} theme={theme} />;
 }

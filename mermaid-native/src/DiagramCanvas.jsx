@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import VidFullScreenOnIcon from '@atlaskit/icon/glyph/vid-full-screen-on';
 import VidFullScreenOffIcon from '@atlaskit/icon/glyph/vid-full-screen-off';
+import { isDarkMermaidTheme } from './mermaid-renderer';
 
 const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.2;
@@ -20,7 +21,7 @@ function clamp(value, min, max) {
  * into presentation attributes instead of a <style> block). viewBox is a
  * plain SVG attribute, so it isn't affected.
  */
-export default function DiagramCanvas({ svg }) {
+export default function DiagramCanvas({ svg, theme = 'default' }) {
   const wrapRef = useRef(null);
   const containerRef = useRef(null);
   const svgElRef = useRef(null);
@@ -190,6 +191,9 @@ export default function DiagramCanvas({ svg }) {
     <div
       ref={wrapRef}
       className={`diagram-canvas-wrap${fullscreen ? ' diagram-canvas-wrap-fullscreen' : ''}`}
+      // Keys the diagram's own surface (background) to its chosen Mermaid
+      // theme, not Jira's light/dark chrome — see isDarkMermaidTheme.
+      data-surface={isDarkMermaidTheme(theme) ? 'dark' : 'light'}
     >
       <div
         ref={containerRef}
