@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mermaid-native
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: mermaid-native/.nvmrc
+          cache: npm
+          cache-dependency-path: mermaid-native/package-lock.json
+
+      # Also installs static/main-custom-ui's dependencies via postinstall.
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run build

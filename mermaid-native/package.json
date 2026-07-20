@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "npm run build --prefix static/main-custom-ui",
-    "postinstall": "npm install --prefix static/main-custom-ui"
+    "postinstall": "npm install --prefix static/main-custom-ui",
+    "test": "node --test"
   },
   "dependencies": {
     "@forge/api": "^4.0.0",
