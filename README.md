@@ -3,7 +3,7 @@
 A [Jira Forge](https://developer.atlassian.com/platform/forge/) app that lets
 you attach one or more editable [Mermaid](https://mermaid.js.org/) diagrams
 directly to a Jira issue, rendered natively in an issue panel — no external
-image hosting, no screenshots pasted into descriptions, no paid add-on.
+image hosting, no screenshots pasted into descriptions, no paid add-on, no additional logins.
 
 Runs entirely on Atlassian's free Forge developer tier: no server to host,
 no database, no monthly bill.
