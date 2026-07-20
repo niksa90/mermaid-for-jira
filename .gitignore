@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+build/
+dist/
+
+# Forge tooling
+.forge/
+
+# Browser automation session artifacts (not project source)
+.playwright-mcp/
+
+# Editor/OS
+.DS_Store

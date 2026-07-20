@@ -1,0 +1,327 @@
+/* Hand-rolled styling, not Atlaskit's Button/TextField.
+   Forge Custom UI's CSP blocks the inline <style> injection those
+   components rely on at runtime (see mermaid-native/CLAUDE.md), so their
+   visuals don't survive here. Everything below is plain CSS shipped as a
+   real stylesheet via MiniCssExtractPlugin, which *is* CSP-safe. Colors
+   are a hand-picked approximation of Jira's current design language. */
+:root {
+  --color-primary: #0c66e4;
+  --color-primary-hover: #0055cc;
+  --color-primary-active: #09326c;
+  --color-on-primary: #ffffff;
+
+  --color-subtle-bg: #f1f2f4;
+  --color-subtle-bg-hover: #dcdfe4;
+  --color-subtle-bg-active: #b3b9c4;
+
+  --color-danger-bg-hover: #ffeceb;
+  --color-danger-text: #ae2e24;
+
+  --color-border: #dfe1e6;
+  --color-border-focus: #388bff;
+
+  --color-text: #172b4d;
+  --color-text-subtle: #626f86;
+
+  --color-success-text: #216e4e;
+
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+body {
+  margin: 0;
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.board-container {
+  padding: 12px 16px 24px;
+  max-height: 640px;
+  overflow-y: auto;
+}
+
+.board-center {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* --- Diagram card --- */
+
+.diagram-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.diagram-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: #fafbfc;
+}
+
+.diagram-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagram-label-input {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.diagram-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.diagram-card-body-edit {
+  padding: 10px;
+}
+
+.diagram-card-body-display {
+  padding: 12px;
+}
+
+/* --- Editor / preview --- */
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.style-picker-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+}
+
+.editor-split {
+  display: flex;
+  gap: 12px;
+}
+
+.editor-pane,
+.preview-pane {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.mermaid-textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  color: var(--color-text);
+}
+
+.mermaid-textarea:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 1px var(--color-border-focus);
+}
+
+.preview-pane {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fafbfc;
+  height: 320px;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Display mode gets a taller canvas. Fixed px, not vh: the panel is
+   already a fixed-height, self-scrolling box (.board-container), and vh
+   here would resolve against the outer Jira page/iframe rather than
+   anything meaningful in that layout. */
+.diagram-card-body-display .diagram-canvas-wrap {
+  height: 520px;
+}
+
+/* Pan/zoom canvas — see DiagramCanvas.jsx. Height comes from the parent
+   (.preview-pane or the display rule above); dragging replaces the native
+   scrollbar a plain overflow:auto box would otherwise show. */
+.diagram-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.diagram-canvas {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.diagram-canvas-panning {
+  cursor: grabbing;
+}
+
+.diagram-canvas svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.diagram-zoom-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.diagram-zoom-controls .btn-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.diagram-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 120px;
+}
+
+/* --- Buttons --- */
+
+.btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.1s ease, color 0.1s ease;
+  white-space: nowrap;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+.btn-primary:hover {
+  background: var(--color-primary-hover);
+}
+.btn-primary:active {
+  background: var(--color-primary-active);
+}
+
+.btn-subtle {
+  background: var(--color-subtle-bg);
+  color: var(--color-text);
+}
+.btn-subtle:hover {
+  background: var(--color-subtle-bg-hover);
+}
+.btn-subtle:active {
+  background: var(--color-subtle-bg-active);
+}
+
+.btn-icon {
+  width: 32px;
+  padding: 0;
+}
+
+.btn-remove:hover {
+  background: var(--color-danger-bg-hover);
+  color: var(--color-danger-text);
+}
+
+/* --- Inputs --- */
+
+.text-input,
+.select-input {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  height: 32px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+.text-input:focus,
+.select-input:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 1px var(--color-border-focus);
+}
+
+.select-input {
+  padding-right: 24px;
+}
+
+/* --- Board footer / save status --- */
+
+.board-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-subtle);
+}
+
+.save-status-saved {
+  color: var(--color-success-text);
+}
+
+.save-status-error {
+  color: var(--color-danger-text);
+}
