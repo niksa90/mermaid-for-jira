@@ -30,19 +30,64 @@ anything that risks it before writing code, don't just implement it:
 - Don't treat any specific Forge free-tier quota number as fixed knowledge —
   Atlassian's billing model shifts over time. If a limit actually matters,
   check current docs rather than assuming.
+- **GB-seconds (Forge function compute) are spent only by resolver
+  invocations** — the static Custom UI bundle, React, and Mermaid rendering
+  all run client-side in the browser and cost nothing against that budget.
+  When optimizing for GB-seconds, look at what triggers `invoke('getFieldValue'
+  | 'setFieldValue', ...)`, not bundle size (that's a load-time concern
+  instead). This is why edit/display mode is deliberately kept as client-only
+  React state (`modes` in `App.jsx`), not part of the persisted diagram
+  object — toggling it used to fire a resolver invocation on every click for
+  no content change. To check actual usage, use the Forge developer console's
+  usage metrics for this app — don't estimate or fabricate a GB-seconds
+  figure from the code.
 
 ## Architecture
 
 - `mermaid-native/manifest.yml` — one `jira:issuePanel` module ("Mermaid
   Diagrams"), Custom UI, backed by one resolver function.
 - `mermaid-native/src/resolvers/index.js` — backend resolver
-  (`getFieldValue` / `setFieldValue`), calls Jira REST `asUser()`.
+  (`getFieldValue` / `setFieldValue`), calls Jira REST `asUser()`. Beyond a
+  plain read/write, it implements:
+  - **Optimistic concurrency**: `getFieldValue` returns a `snapshot`
+    (`stableStringify`d — see `mermaid-native/src/stable-json.js`) of what's
+    currently stored, alongside `diagrams`. The client sends that snapshot
+    back as `baseSnapshot` on every `setFieldValue` call; the resolver
+    re-reads the current server value and compares its own `stableStringify`
+    of it to `baseSnapshot` before writing. **Use `stableStringify`, never
+    plain `JSON.stringify`, for anything that becomes or is compared against
+    a snapshot** — Jira's entity-property store isn't guaranteed to
+    round-trip key order/formatting byte-for-byte, and raw string comparison
+    would misfire as a false "someone else changed this" conflict on
+    perfectly ordinary sequential saves by the same user. A mismatch means
+    someone else changed the issue's diagrams in between — the resolver
+    returns `{ conflict: true, current }` instead of silently overwriting,
+    and the client surfaces a "someone else changed these diagrams" banner
+    (see `App.jsx`'s `conflict` state) rather than clobbering their edit.
+    Pass `force: true` to skip the check and write anyway (used by the "keep my
+    changes" conflict-resolution path). Don't strip `baseSnapshot` handling
+    out to "simplify" a future save-path change — that's exactly what
+    reintroduces silent last-write-wins.
+  - **Size-limit enforcement**: rejects (throws) if the serialized value
+    would exceed Jira's documented 32,768-byte entity-property limit
+    (https://developer.atlassian.com/cloud/jira/platform/jira-entity-properties/).
+    `App.jsx` also checks this client-side before attempting a save, purely
+    to fail fast and avoid a doomed resolver invocation — the resolver check
+    is the actual enforcement and must stay even if the client-side one ever
+    changes.
+  - Both `getFieldValue` and `setFieldValue` check the Jira REST response
+    status and throw a descriptive error on failure. Earlier versions of
+    `setFieldValue` didn't check the PUT's response at all, so a failed save
+    (e.g. hitting the size limit) would silently report `{ ok: true }` to the
+    client while nothing was actually saved — don't reintroduce that.
 - `mermaid-native/static/main-custom-ui/` — the actual Custom UI React app
   that runs inside Jira's iframe. **Separate `package.json` and webpack
   build** from the outer `mermaid-native/` package — see Dev loop below.
   - `src/App.jsx` — issue panel shell: diagram list, add/remove, per-diagram
-    edit/display mode, debounced autosave with a visible save-status
-    indicator, persists via `invoke('setFieldValue', ...)`.
+    edit/display mode (client-only, not persisted — see GB-seconds note
+    above), debounced autosave with a visible save-status indicator,
+    conflict-resolution banner, near-size-limit warning. Persists via
+    `invoke('setFieldValue', ...)`.
   - `src/styles.css` — hand-rolled CSS with hardcoded hex colors approximating
     Jira's palette, **not** Atlaskit design tokens. This is deliberate, not
     an oversight — see "Atlaskit components and CSP" below. No light/dark
@@ -165,18 +210,34 @@ whitelist doesn't cover, with no error.
 - **Deploy**: `npx forge deploy`, then `npx forge install --upgrade` against
   the connected site.
 - **Verify visually**: this project has been tested by driving a real
-  browser against a connected Jira Cloud test site
-  (`keephub-test.atlassian.net`; see `.playwright-mcp/` for past session
-  artifacts). Prefer an actual browser check over assuming a UI/styling
+  browser against a connected Jira Cloud test/dev site (see `.playwright-mcp/`
+  for past session artifacts, if present — that directory is gitignored, not
+  part of the published repo). Prefer an actual browser check over assuming a UI/styling
   change looks right — it renders inside Jira's iframe under production CSP,
   which no local/isolated preview reproduces.
 
 ## Known state (as of last review)
 
-Works as a POC. Diagrams have a per-diagram edit/display mode, a debounced
-autosave with a visible save-status indicator, and a Mermaid built-in-theme
-picker (see above). Buttons/inputs are hand-styled plain HTML, not Atlaskit
-components (see "Atlaskit components and CSP"). Remaining rough edges: no
-dark-mode/theme parity with Jira's own UI, flat diagram list with no
-reordering/grouping, no per-node/custom-color styling (only Mermaid's five
-built-in themes), and the split `src/` layout described above.
+Works as a POC and is now under version control (git, initialized at the
+workspace root — `.env` and `.playwright-mcp/` are gitignored). Diagrams have
+a per-diagram edit/display mode, a debounced autosave with a visible
+save-status indicator, a Mermaid built-in-theme picker, and pan/zoom
+(`mermaid-native/src/DiagramCanvas.jsx` — wheel to zoom, drag to pan,
++/−/reset controls, implemented via `viewBox` attribute manipulation, not
+CSS transforms, for the same CSP reason as everything else here) plus a
+fullscreen toggle (a `position: fixed` overlay covering the panel as the
+guaranteed baseline, with the real browser Fullscreen API attempted on top
+as a best-effort upgrade — Forge controls this iframe's embedding, not this
+app, so whether Jira grants `allow="fullscreen"` isn't something to assume
+either way; a rejected `requestFullscreen()` is silently ignored and the
+CSS overlay still works). Buttons/
+inputs are hand-styled plain HTML, not Atlaskit components (see "Atlaskit
+components and CSP"). The resolver has optimistic-concurrency conflict
+detection and entity-property size-limit enforcement (see Architecture).
+Node/Forge CLI versions are pinned (`.nvmrc`, `@forge/cli@^13`) to versions
+verified to actually work together on this machine.
+
+Remaining rough edges: no dark-mode/theme parity with Jira's own UI, flat
+diagram list with no reordering/grouping, no per-node/custom-color styling
+(only Mermaid's four built-in themes), the split `src/` layout described
+above, and no automated tests or CI.

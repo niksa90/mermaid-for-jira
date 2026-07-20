@@ -18,7 +18,11 @@ resources:
 app:
   runtime:
     name: nodejs22.x
-  id: ari:cloud:ecosystem::app/c3e3a610-cf43-41cd-a79e-c4867aa9f0a4
+  # This id is tied to one specific Atlassian account's app registration.
+  # If you cloned this repo, it isn't yours to deploy to — run
+  # `forge register` (see README.md); it overwrites this id with a fresh
+  # one registered under your own account.
+  id: ari:cloud:ecosystem::app/1ab8c5cd-15fc-42de-9b72-6012c1356988
 
 permissions:
   scopes:
