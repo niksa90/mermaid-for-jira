@@ -86,22 +86,37 @@ anything that risks it before writing code, don't just implement it:
   - `src/App.jsx` — issue panel shell: diagram list, add/remove, per-diagram
     edit/display mode (client-only, not persisted — see GB-seconds note
     above), debounced autosave with a visible save-status indicator,
-    conflict-resolution banner, near-size-limit warning. Persists via
+    conflict-resolution banner, near-size-limit warning, reorder-within-group
+    (`moveDiagram`, delegates to `diagram-groups.js`), and the per-node color
+    picker toolbar (`renderNodeColorPicker`, delegates to `node-style.js` /
+    `state-style.js` depending on diagram type). Persists via
     `invoke('setFieldValue', ...)`.
   - `src/styles.css` — hand-rolled CSS with hardcoded hex colors approximating
     Jira's palette, **not** Atlaskit design tokens. This is deliberate, not
-    an oversight — see "Atlaskit components and CSP" below. No light/dark
-    theme parity with Jira yet; if that's ever wanted, it'd need real CSS
-    custom properties from a statically-loaded token stylesheet (verify such
-    a thing exists and is CSP-safe before assuming — don't just re-add
-    `@atlaskit/tokens` and expect it to work).
-- `mermaid-native/src/DiagramView.jsx`, `mermaid-renderer.js`,
-  `ErrorBoundary.jsx` — imported by the Custom UI app via a relative path
-  (`../../../src/...`) that reaches *up out of* `static/main-custom-ui` into
-  the outer package's `src/`. So there are two `src/` trees under
-  `mermaid-native/`: the outer one holds the resolver *and* these shared UI
-  pieces, the inner one (`static/main-custom-ui/src/`) holds the actual app
-  entry point. Easy to get turned around — check which `src/` you're in.
+    an oversight — see "Atlaskit components and CSP" below. Has light/dark
+    parity with Jira's own chrome (see "Dark mode" in Known state below) —
+    still hand-rolled hex values, not real Atlaskit tokens; the investigation
+    into whether a statically-loaded token stylesheet exists concluded it
+    doesn't (see "Atlaskit components and CSP" below) — don't re-investigate
+    that path from scratch.
+- `mermaid-native/src/DiagramView.jsx`, `DiagramCanvas.jsx`,
+  `mermaid-renderer.js`, `ErrorBoundary.jsx`, `diagram-groups.js`,
+  `node-style.js`, `state-style.js` — imported by the Custom UI app via a
+  relative path (`../../../src/...`) that reaches *up out of*
+  `static/main-custom-ui` into the outer package's `src/`. So there are two
+  `src/` trees under `mermaid-native/`: the outer one holds the resolver
+  *and* these shared UI/pure-logic pieces, the inner one
+  (`static/main-custom-ui/src/`) holds the actual app entry point. Easy to
+  get turned around — check which `src/` you're in.
+  - `diagram-groups.js` — `buildRenderGroups` (section clustering, moved
+    here from `App.jsx` for testability), `moveTargetIndex`/`moveBounds`
+    (reorder-within-group logic — see Known state).
+  - `node-style.js` — flowchart node-id parsing and `style NodeId
+    fill:...,stroke:...,color:...` read/upsert logic behind the color
+    picker.
+  - `state-style.js` — the state-diagram equivalent, but a genuinely
+    different mechanism (`classDef`/`class`, not `style` — see the CSP
+    section below); don't assume the two are interchangeable.
 
 ## Atlaskit components and CSP
 
@@ -136,6 +151,27 @@ assuming it'll look right: it might, if it's been migrated to Compiled; if it
 still resolves to `@emotion/react`, expect it to render unstyled and plan to
 either hand-style around it or replace it, the same way this app already did
 for Button/TextField.
+
+**These Compiled components don't participate in this app's dark mode,
+and that's deliberate, not an oversight.** Their `*.compiled.css` references
+real Atlaskit design-token CSS custom properties (`var(--ds-text,#172b4d)`,
+`var(--ds-border-radius,4px)`, etc. — dozens of them across
+Spinner/SectionMessage's actual usage, hundreds if you count every value
+their shared `@atlaskit/primitives` Box utility could theoretically emit).
+Confirmed by direct inspection: **no static CSS file defining these
+`--ds-*` variables ships anywhere in `@atlaskit/tokens`** — theming is
+entirely a runtime mechanism (`setGlobalTheme`/`getThemeStyles`, which
+constructs and injects a stylesheet at runtime), the same category of
+CSP risk already established for Button/TextField above, not something to
+assume is safe just because it's "just CSS variables." Hand-authoring a
+matching light/dark `--ds-*` stylesheet ourselves was considered and
+rejected: it would pin this app to Atlaskit's *undocumented* internal
+variable names (not a supported API) for two small, transient UI elements
+(a loading spinner, warning/error banners) — a standing fragility risk
+(silent breakage on an Atlaskit version bump) judged disproportionate to
+the payoff. If this is ever revisited, redo the "which `--ds-*` names does
+the actual rendered output use" check fresh against the then-current
+Atlaskit version rather than trusting this list to still be accurate.
 
 ## The CSP / styling constraint (central to "let users style diagrams")
 
@@ -172,6 +208,62 @@ overrides, custom fonts, etc.) must do one of:
 3. Use Mermaid config/directives that Mermaid itself emits as presentation
    attributes rather than CSS — verify this against actual render output,
    don't assume from Mermaid's docs.
+
+**The class-rule pass (1 above) must respect `!important`, and used not
+to.** It originally applied class rules in whatever order
+`sheet.cssRules` yielded them, skipping a declaration if the element
+already had that attribute (`!el.hasAttribute(attr)`) — i.e. first-rule-
+processed always won, full stop. This is wrong per real CSS cascade
+semantics, and it silently broke the per-state color picker for state
+diagrams (`state-style.js`): Mermaid's base theme always emits a generic
+rule like `.node rect{fill:#ECECFF;...}` *before* a `classDef`-derived
+override like `.nodeStyle_A rect{fill:red!important;...}` in the
+stylesheet, so the generic rule claimed `fill`/`stroke` first and the
+`!important` override — which Mermaid deliberately marks `!important`
+specifically so it wins — got skipped. Only the state's *text* color
+happened to render correctly, because no earlier generic rule had already
+claimed `fill` on that specific `<tspan>`. Confirmed by actually rendering
+through the real `mermaid` package with `jsdom` supplying the DOM APIs
+(`DOMParser`/`CSSStyleSheet`/`XMLSerializer`) as a scratch diagnostic, not
+guessed from reading the code — `mermaid.render()` needs a `document`
+global that plain Node doesn't have, and jsdom needs
+`SVGElement.prototype.getBBox`/`getComputedTextLength` polyfilled since it
+doesn't implement real layout. Fixed by applying class rules in two
+passes: normal declarations first (unchanged, first-write-wins), then a
+second pass that always overwrites for any declaration that was
+`!important` (via `rule.style.getPropertyPriority(prop)`) — matching
+`!important`'s real semantics of winning regardless of source order. Also
+defensively strips a literal trailing `!important` off the extracted
+value before using it (`value.replace(/\s*!important\s*$/i, '')`): some
+CSSOM implementations return it as part of `getPropertyValue()`'s result
+rather than exposing it only via `getPropertyPriority()`, and left in,
+it's invalid syntax as an SVG attribute value, breaking the fill instead
+of applying the requested color. This class-rule pass is shared by both
+flowchart and state-diagram rendering, so a future change here needs
+re-verifying against both, not just whichever one prompted the change.
+
+**Flowchart and state-diagram per-node coloring are two genuinely
+different Mermaid mechanisms — don't assume one implies the other.**
+Verified directly against the real `mermaid` package's parser (not
+assumed from docs or memory): flowcharts accept a single `style NodeId
+fill:...,stroke:...,color:...` line (handled by (2) above, `node-style.js`
+manages it). State diagrams (`stateDiagram-v2`) *reject* that exact syntax
+as a parse error — their only per-state coloring mechanism is
+`classDef className fill:...` + `class StateId className`, two
+coordinated lines instead of one (`state-style.js` manages both together
+under a deterministic per-state class name, `nodeStyle_<stateId>`, so it
+reads/writes like a single per-state style from the picker's point of
+view even though it's backed by two source lines). Sequence, ER, pie, and
+gantt diagrams have **no** per-element style directive at all — checked
+by attempting `style`, `classDef`/`class`, and (for sequence diagrams)
+`rect rgb(...)...end` region-highlighting against the real parser; only
+the last one parses, and it colors a *range of messages*, not a specific
+participant, so it isn't a substitute. The per-node color picker in
+`App.jsx` only renders for flowchart/state-diagram source for exactly this
+reason — extending it to another diagram type needs the same "does
+Mermaid actually support this" check against the real parser before
+writing any parsing/upsert logic, not an assumption that it's just a
+matter of writing a similar module.
 
 The per-diagram style picker (`diagram.theme`, one of Mermaid's built-in
 themes — see `MERMAID_THEMES` in `mermaid-renderer.js`) uses option 3: it
@@ -255,16 +347,86 @@ it persists) and collapsed to just their header in display mode (client-only
 state, like edit/display mode — see the GB-seconds note above). Diagrams can
 also be grouped into named, collapsible sections via a `section` string field
 on each diagram (real, persisted content — unlike collapse/edit-display
-state). Grouping is render-time only: `buildRenderGroups()` in `App.jsx`
-clusters diagrams sharing a section name wherever that name first appears in
-the flat array, but storage order, reorder (up/down), conflict detection,
-and the size-limit math all still operate on that same flat `diagrams`
-array, untouched by grouping. One known rough edge: the up/down reorder
-buttons move a diagram by flat-array index, not by position-within-its-group
-— moving a grouped diagram can visually jump it across a section boundary
-one step at a time rather than staying within the group. Not fixed
-intentionally (simpler, and not yet asked for); revisit if it's confusing in
-practice.
+state). Grouping is render-time only: `buildRenderGroups()` (moved to
+`diagram-groups.js` for testability) clusters diagrams sharing a section
+name wherever that name first appears in the flat array, but storage order,
+conflict detection, and the size-limit math all still operate on that same
+flat `diagrams` array, untouched by grouping.
+
+**Reorder now stays within a diagram's own group.** The up/down buttons
+used to swap a diagram with whatever was flat-array-adjacent, regardless of
+section — since grouping clusters by content (matching section name), not
+physical array position, this didn't visually split a section, but it did
+mean a diagram's apparent position within its own group could jump or
+silently not move depending on what else sat between it and its section-
+mates in the flat array, and the disabled state for the buttons used
+flat-array bounds instead of group-relative ones. `diagram-groups.js`'s
+`moveTargetIndex`/`moveBounds` fix this: a sectioned diagram always swaps
+with its *nearest same-section* neighbor's flat index (skipping over
+whatever else sits physically between them), and the up/down buttons
+disable based on position within the group, not the flat array. An
+unsectioned diagram's behavior is unchanged (flat-array-adjacent swap).
+
+**Dark mode** follows Jira's own light/dark/auto preference. The signal is
+`view.getContext()`'s `theme.colorMode` (`'light' | 'dark' | 'auto'`, or
+absent on older `@forge/bridge` versions) — confirmed via that package's
+own type definitions to be plain JSON delivered over the bridge, not a
+runtime style/script injection, so it doesn't hit the CSP issue documented
+below for Atlaskit components. `resolveEffectiveDark()` in `App.jsx`
+resolves this down to a boolean once at panel load (`'auto'`/absent falls
+back to `window.matchMedia('(prefers-color-scheme: dark)')`) and
+`applyColorMode()` sets `<html data-color-mode="light"|"dark">`
+accordingly — `styles.css`'s `:root[data-color-mode='dark']` block is the
+single source of truth for the dark palette (there's deliberately no
+parallel `@media (prefers-color-scheme: dark)` block to keep in sync by
+hand; resolving 'auto' in JS made that redundant, and the earlier version
+of this that had both was a maintenance-drift risk in review). This is
+read once at load, not observed live — a Jira theme change while the panel
+is already open needs a reload to pick up. **Known, accepted gap:**
+`@atlaskit/spinner`'s and `@atlaskit/section-message`'s own colors don't
+follow this (see "Atlaskit components and CSP" above for why that's a
+deliberate tradeoff, not an oversight) — everything else (hand-rolled
+buttons/inputs, card chrome, diagram surfaces) does.
+
+**A diagram's own surface (background) follows *its own* Mermaid theme,
+not Jira's chrome dark mode — these are independent settings, and
+conflating them was a real regression caught during review.** The preview
+pane, inline display, and fullscreen backdrop all read a `data-surface`
+attribute (`"light"` or `"dark"`) that `DiagramCanvas.jsx` sets from
+`isDarkMermaidTheme(diagram.theme)` (`mermaid-renderer.js` — true only for
+Mermaid's `'dark'` theme). Do not key this off Jira's `data-color-mode`
+instead: an earlier version did exactly that, and it broke fullscreen —
+a diagram using one of the light Mermaid themes (Default/Neutral/Forest)
+has text/edge-label colors that assume a light backdrop, and switching the
+backdrop to dark chrome-side made that text nearly invisible while leaving
+the diagram's own colors untouched. **New diagrams default their Mermaid
+theme to `'dark'` when the panel is effectively in dark mode** (same
+`effectiveDark` resolution as above), `'default'` otherwise — deliberately
+only affects diagrams that don't exist yet; no auto-switching of an
+existing diagram's theme, since that would change what already-authored
+content renders as out from under whoever's viewing it.
+
+**Per-node color picker**, for flowchart and state diagrams (see the CSP
+section above for exactly why those two and not sequence/ER/pie/gantt, and
+why flowchart and state-diagram styling need genuinely different
+read/write logic despite looking like they should be the same feature).
+Shown in edit mode only, next to the existing theme/section toolbar. One
+gotcha already hit: the color `<input type="color">`s must **not** use
+`{ immediate: true }` on `onChange` — a native color input fires `onChange`
+continuously while its picker is being dragged (many times a second, not
+once on release), and firing an immediate save per drag tick raced
+multiple concurrent `setFieldValue` calls against the app's own
+optimistic-concurrency check (each one reads `baseSnapshotRef.current`
+before any of the earlier in-flight ones has completed and updated it),
+surfacing as a spurious "someone else changed these diagrams" conflict
+banner against the app's *own* rapid-fire edits — looking, to a user
+dragging a color slider, exactly like the app was overwriting their own
+in-progress work. Fixed by treating color-dragging like continuous typing
+(debounced, via plain `updateDiagram(id, patch)` with no `immediate`
+option, flushed via `onBlur={flushSave}`), the same pattern already used
+for the source textarea — not like a discrete dropdown pick. The "Reset
+node" button is a genuine discrete action and correctly keeps
+`{ immediate: true }`.
 
 **Gotcha already hit once:** the Section `<input>` cannot be wired straight
 to `diagram.section` via `onChange` — each render-group wrapper is keyed by
@@ -280,17 +442,28 @@ field ever needs to double as a grouping/structural key, it'll need the same
 draft-until-commit treatment — anything read by `buildRenderGroups` is
 unsafe to bind directly to a live-typing input's `onChange`. Pure-logic
 functions (`stable-json.js`, `mermaid-renderer.js`'s `withTheme`/
-`safeDiagramId`/`readableParseError`) have unit tests under `src/*.test.js`,
-run via `npm test` (Node's built-in test runner — no test framework
-dependency) and in CI (`.github/workflows/ci.yml`, runs on push/PR, no
-Atlassian credentials needed since it only does `npm test` + `npm run
-build`, deliberately not `forge lint`/`forge deploy`). Resolver logic
-(`getFieldValue`/`setFieldValue`) is *not* unit tested — it would require
-mocking `@forge/api`/`@forge/resolver`, which wasn't judged worth the
-fragility; its highest-risk piece (conflict comparison) is covered
-indirectly via `stable-json.test.js` instead.
+`safeDiagramId`/`readableParseError`/`isDarkMermaidTheme`, `diagram-groups.js`,
+`node-style.js`, `state-style.js`) have unit tests under `src/*.test.js`
+(40 tests total as of last review), run via `npm test` (Node's built-in
+test runner — no test framework dependency) and in CI
+(`.github/workflows/ci.yml`, runs on push/PR, no Atlassian credentials
+needed since it only does `npm test` + `npm run build`, deliberately not
+`forge lint`/`forge deploy`). Resolver logic (`getFieldValue`/
+`setFieldValue`) is *not* unit tested — it would require mocking
+`@forge/api`/`@forge/resolver`, which wasn't judged worth the fragility;
+its highest-risk piece (conflict comparison) is covered indirectly via
+`stable-json.test.js` instead. `inlineSvgStyles()` (the CSS-to-attribute
+baking in `mermaid-renderer.js`) is also not unit tested — it needs real
+DOM APIs (`DOMParser`/`CSSStyleSheet`/`XMLSerializer`) that plain Node
+doesn't have; it was checked with a one-off `jsdom`-backed scratch script
+while diagnosing the `!important` cascade bug above, not added as a
+permanent test, matching this project's existing convention of verifying
+rendering-dependent code in a real browser rather than automating it
+around a DOM shim.
 
-Remaining rough edges: no dark-mode/theme parity with Jira's own UI, flat
-diagram list with no reordering/grouping, no per-node/custom-color styling
-(only Mermaid's four built-in themes), the split `src/` layout described
-above, and no automated tests or CI.
+Remaining rough edges: `@atlaskit/spinner`/`@atlaskit/section-message`
+don't follow dark mode (deliberate, see "Atlaskit components and CSP"), no
+per-node color picker for sequence/ER/pie/gantt diagrams (Mermaid itself
+has no mechanism for it — verified, not just unbuilt), the split `src/`
+layout described above, and no automated UI/rendering or
+resolver-integration tests.

@@ -13,6 +13,19 @@ import DiagramView from '../../../src/DiagramView';
 import DiagramErrorBoundary from '../../../src/ErrorBoundary';
 import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
 import { stableStringify } from '../../../src/stable-json';
+import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
+import {
+  isFlowchartSource,
+  parseFlowchartNodeIds,
+  parseNodeStyles,
+  upsertNodeStyle,
+} from '../../../src/node-style';
+import {
+  isStateDiagramSource,
+  parseStateIds,
+  parseStateStyles,
+  upsertStateStyle,
+} from '../../../src/state-style';
 import './styles.css';
 
 const SAVE_DEBOUNCE_MS = 600;
@@ -27,12 +40,12 @@ function payloadSizeBytes(diagramsArr) {
   return new TextEncoder().encode(JSON.stringify({ diagrams: diagramsArr })).length;
 }
 
-function newDiagram() {
+function newDiagram(theme = 'default') {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     label: 'New diagram',
     source: 'flowchart TD\n  A[Start] --> B[End]',
-    theme: 'default',
+    theme,
     section: '',
   };
 }
@@ -42,30 +55,27 @@ function themeLabel(theme) {
 }
 
 /**
- * Groups diagrams by their `section` field for rendering, without changing
- * how they're stored — `diagrams` stays a flat array (order = real,
- * persisted content), grouping is purely a render-time view over it. A
- * diagram with no section renders standalone; diagrams sharing a section
- * name are clustered together the first time that name appears, regardless
- * of where else in the array a same-named diagram shows up later.
+ * Resolves Jira's own light/dark preference (`theme.colorMode` from
+ * `view.getContext()` — 'light' | 'dark' | 'auto', or absent on older
+ * bridge versions) down to a plain boolean: 'auto' or an absent field
+ * falls back to the OS-level prefers-color-scheme signal. Read once at
+ * panel load, not observed live, so a Jira theme change while the panel
+ * is already open needs a reload to pick up.
  */
-function buildRenderGroups(diagramsArr) {
-  const groups = [];
-  const sectionAt = new Map();
-  diagramsArr.forEach((diagram, index) => {
-    const section = (diagram.section || '').trim();
-    if (!section) {
-      groups.push({ type: 'standalone', diagram, index });
-      return;
-    }
-    if (sectionAt.has(section)) {
-      groups[sectionAt.get(section)].items.push({ diagram, index });
-    } else {
-      sectionAt.set(section, groups.length);
-      groups.push({ type: 'section', name: section, items: [{ diagram, index }] });
-    }
-  });
-  return groups;
+function resolveEffectiveDark(colorMode) {
+  if (colorMode === 'dark') return true;
+  if (colorMode === 'light') return false;
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+/**
+ * Mirrors the resolved dark/light mode onto `<html data-color-mode>` —
+ * the single source of truth styles.css's `[data-color-mode='dark']` rule
+ * reacts to, rather than also keeping a separate prefers-color-scheme CSS
+ * block in sync with the same palette by hand.
+ */
+function applyColorMode(isDark) {
+  document.documentElement.setAttribute('data-color-mode', isDark ? 'dark' : 'light');
 }
 
 export default function App() {
@@ -94,6 +104,14 @@ export default function App() {
   // live-typed text here and only committing to diagram.section on blur
   // keeps the input's DOM node stable while typing.
   const [sectionDraft, setSectionDraft] = useState({});
+  // Which node the per-node color picker is currently pointed at, per
+  // diagram — a view preference (which node's colors you're looking at),
+  // not diagram content, so client-only like modes/collapsed above.
+  const [selectedNode, setSelectedNode] = useState({});
+  // Whether the panel is effectively rendering in dark mode (see
+  // resolveEffectiveDark) — used only to pick a new diagram's starting
+  // Mermaid theme (see addDiagram); never re-applied to existing diagrams.
+  const [effectiveDark, setEffectiveDark] = useState(false);
   // idle | pending | saving | saved | error | too-large
   const [saveState, setSaveState] = useState('idle');
   const [errorMessage, setErrorMessage] = useState(null);
@@ -124,6 +142,9 @@ export default function App() {
     async function load() {
       try {
         const context = await view.getContext();
+        const dark = resolveEffectiveDark(context.theme?.colorMode);
+        applyColorMode(dark);
+        setEffectiveDark(dark);
         const key = context.extension.issue.key;
         const data = await invoke('getFieldValue', { issueKey: key });
         if (!cancelled) {
@@ -236,7 +257,7 @@ export default function App() {
   }
 
   function addDiagram() {
-    const diagram = newDiagram();
+    const diagram = newDiagram(effectiveDark ? 'dark' : 'default');
     setModes((prev) => ({ ...prev, [diagram.id]: 'edit' }));
     persist([...diagrams, diagram], { immediate: true });
   }
@@ -306,9 +327,9 @@ export default function App() {
   }
 
   function moveDiagram(id, direction) {
+    const target = moveTargetIndex(diagrams, id, direction);
+    if (target === null) return;
     const index = diagrams.findIndex((d) => d.id === id);
-    const target = index + direction;
-    if (index === -1 || target < 0 || target >= diagrams.length) return;
     const next = [...diagrams];
     [next[index], next[target]] = [next[target], next[index]];
     persist(next, { immediate: true });
@@ -336,9 +357,133 @@ export default function App() {
   const nearSizeLimit =
     saveState !== 'too-large' && sizeBytes > MAX_PROPERTY_BYTES * SIZE_WARNING_RATIO;
 
-  function renderDiagramCard(diagram, diagramIndex) {
+  // Per-node fill/border/text color picker, shown in edit mode for
+  // flowchart and state diagrams with at least one node/state the parser
+  // could identify (see node-style.js / state-style.js). Other diagram
+  // types (sequence, ER, pie, gantt, ...) don't get this picker at all —
+  // Mermaid itself has no per-node style mechanism for them, verified
+  // against the real parser rather than assumed, not just a gap in this
+  // code.
+  //
+  // Flowcharts and state diagrams need genuinely different source syntax
+  // (flowchart's single `style NodeId ...` line vs. state diagram's
+  // two-line `classDef` + `class` pair — state diagrams reject the
+  // flowchart syntax outright), so the parse/read/write functions are
+  // swapped based on diagram type while the picker UI itself stays one
+  // shared implementation.
+  function renderNodeColorPicker(diagram) {
+    let nodeIds;
+    let parseStyles;
+    let upsertStyle;
+    if (isFlowchartSource(diagram.source)) {
+      nodeIds = parseFlowchartNodeIds(diagram.source);
+      parseStyles = parseNodeStyles;
+      upsertStyle = upsertNodeStyle;
+    } else if (isStateDiagramSource(diagram.source)) {
+      nodeIds = parseStateIds(diagram.source);
+      parseStyles = parseStateStyles;
+      upsertStyle = upsertStateStyle;
+    } else {
+      return null;
+    }
+    if (nodeIds.length === 0) return null;
+
+    const currentNode =
+      selectedNode[diagram.id] && nodeIds.includes(selectedNode[diagram.id])
+        ? selectedNode[diagram.id]
+        : nodeIds[0];
+    const current = parseStyles(diagram.source)[currentNode] || {};
+
+    // Not { immediate: true }: a native color <input> fires onChange
+    // continuously while its picker is being dragged (many times a second,
+    // not once on release), same as continuous typing in the source
+    // textarea — so this goes through the debounced path and flushes on
+    // blur, instead of firing a separate immediate save per drag tick.
+    // Racing that many concurrent immediate saves against each other used
+    // to trip the app's own optimistic-concurrency check (each save reads
+    // baseSnapshotRef before any of the earlier in-flight ones had
+    // completed), surfacing as a spurious "someone else changed this"
+    // conflict against the app's own rapid-fire edits.
+    function applyNodeStyle(prop, value) {
+      updateDiagram(diagram.id, {
+        source: upsertStyle(diagram.source, currentNode, { [prop]: value }),
+      });
+    }
+
+    return (
+      <div className="node-style-toolbar">
+        <label className="style-picker-label" htmlFor={`node-${diagram.id}`}>
+          Node
+        </label>
+        <select
+          id={`node-${diagram.id}`}
+          className="select-input"
+          value={currentNode}
+          onChange={(e) => setSelectedNode((prev) => ({ ...prev, [diagram.id]: e.target.value }))}
+        >
+          {nodeIds.map((id) => (
+            <option key={id} value={id}>
+              {id}
+            </option>
+          ))}
+        </select>
+        <label className="node-color-label">
+          Fill
+          <input
+            type="color"
+            className="node-color-input"
+            value={current.fill || '#ffffff'}
+            onChange={(e) => applyNodeStyle('fill', e.target.value)}
+            onBlur={flushSave}
+          />
+        </label>
+        <label className="node-color-label">
+          Border
+          <input
+            type="color"
+            className="node-color-input"
+            value={current.stroke || '#333333'}
+            onChange={(e) => applyNodeStyle('stroke', e.target.value)}
+            onBlur={flushSave}
+          />
+        </label>
+        <label className="node-color-label">
+          Text
+          <input
+            type="color"
+            className="node-color-input"
+            value={current.color || '#000000'}
+            onChange={(e) => applyNodeStyle('color', e.target.value)}
+            onBlur={flushSave}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn btn-subtle"
+          onClick={() =>
+            updateDiagram(
+              diagram.id,
+              {
+                source: upsertStyle(diagram.source, currentNode, {
+                  fill: '',
+                  stroke: '',
+                  color: '',
+                }),
+              },
+              { immediate: true }
+            )
+          }
+        >
+          Reset node
+        </button>
+      </div>
+    );
+  }
+
+  function renderDiagramCard(diagram) {
     const mode = modes[diagram.id] || 'display';
     const isCollapsed = mode === 'display' && !!collapsed[diagram.id];
+    const { canUp, canDown } = moveBounds(diagrams, diagram.id);
     return (
       <div className="diagram-card" key={diagram.id}>
         <div className="diagram-card-header">
@@ -382,7 +527,7 @@ export default function App() {
                   className="btn btn-subtle btn-icon"
                   title="Move up"
                   aria-label="Move diagram up"
-                  disabled={diagramIndex === 0}
+                  disabled={!canUp}
                   onClick={() => moveDiagram(diagram.id, -1)}
                 >
                   <ArrowUpIcon label="" size="small" />
@@ -392,7 +537,7 @@ export default function App() {
                   className="btn btn-subtle btn-icon"
                   title="Move down"
                   aria-label="Move diagram down"
-                  disabled={diagramIndex === diagrams.length - 1}
+                  disabled={!canDown}
                   onClick={() => moveDiagram(diagram.id, 1)}
                 >
                   <ArrowDownIcon label="" size="small" />
@@ -474,6 +619,7 @@ export default function App() {
                 placeholder="None"
               />
             </div>
+            {renderNodeColorPicker(diagram)}
             <div className="editor-split">
               <div className="editor-pane">
                 <textarea
@@ -550,7 +696,7 @@ export default function App() {
 
       {buildRenderGroups(diagrams).map((group) =>
         group.type === 'standalone' ? (
-          renderDiagramCard(group.diagram, group.index)
+          renderDiagramCard(group.diagram)
         ) : (
           <div className="diagram-section" key={`section-${group.name}`}>
             <button
@@ -571,7 +717,7 @@ export default function App() {
             </button>
             {!sectionCollapsed[group.name] && (
               <div className="diagram-section-body">
-                {group.items.map(({ diagram, index }) => renderDiagramCard(diagram, index))}
+                {group.items.map(({ diagram }) => renderDiagramCard(diagram))}
               </div>
             )}
           </div>
