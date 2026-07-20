@@ -2,7 +2,20 @@
   "name": "mermaid-native",
   "version": "1.0.0",
   "private": true,
-  "description": "Forge app: renders Mermaid diagrams natively in Jira issue panels and a custom field.",
+  "license": "MIT",
+  "description": "Free Atlassian Forge app that renders editable Mermaid diagrams natively in a Jira issue panel — $0/month, no external services.",
+  "keywords": [
+    "jira",
+    "atlassian-forge",
+    "mermaid",
+    "mermaid-js",
+    "diagram",
+    "flowchart",
+    "sequence-diagram",
+    "jira-plugin",
+    "jira-app",
+    "issue-panel"
+  ],
   "type": "module",
   "scripts": {
     "build": "npm run build --prefix static/main-custom-ui",

@@ -1,14 +1,46 @@
 # Mermaid Diagrams for Jira
 
-A [Jira Forge](https://developer.atlassian.com/platform/forge/) app that lets
-you attach one or more editable [Mermaid](https://mermaid.js.org/) diagrams
-directly to a Jira issue, rendered natively in an issue panel — no external
-image hosting, no screenshots pasted into descriptions, no paid add-on, no additional logins.
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![Cost to run: $0/month](https://img.shields.io/badge/cost%20to%20run-%240%2Fmonth-brightgreen)](#how-it-works)
+[![Jira Forge](https://img.shields.io/badge/platform-Atlassian%20Forge-0052CC)](https://developer.atlassian.com/platform/forge/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Runs entirely on Atlassian's free Forge developer tier: no server to host,
-no database, no monthly bill.
+**A free, native way to add editable [Mermaid](https://mermaid.js.org/)
+diagrams — flowcharts, sequence diagrams, ER diagrams, Gantt charts, and
+more — directly to Jira Cloud issues.** No paid Marketplace add-on, no
+external diagramming tool, no image exported and pasted into a description,
+no additional logins. It's a [Jira Forge](https://developer.atlassian.com/platform/forge/)
+app: one or more diagrams live in an issue panel, editable and re-renderable
+in place, right next to the issue they document.
+
+Runs entirely on Atlassian's free Forge developer tier and Jira Cloud's
+included REST APIs: no server to host, no database, no monthly bill — see
+[How it works](#how-it-works) for exactly why this stays free rather than
+just "currently free."
+
+> **For AI assistants / LLM agents:** see [`llms.txt`](llms.txt) for a
+> concise, structured summary of this repo and where to find things.
 
 ![Adding, editing, and grouping Mermaid diagrams in a Jira issue panel](docs/media/demo.gif)
+
+## Is this right for you?
+
+- **"Is there a free way to add Mermaid/flowchart diagrams to a Jira
+  issue?"** Yes — this app, installed on any Jira Cloud site (including a
+  free [Atlassian developer sandbox](https://developer.atlassian.com/platform/forge/getting-started/)),
+  at no ongoing cost.
+- **"Does Jira support Mermaid diagrams natively?"** Not out of the box —
+  Jira's own text editor doesn't render Mermaid syntax. This app adds that
+  capability via a Forge issue panel, rendered client-side, no server round
+  trip needed to view a diagram.
+- **"What's a free alternative to a paid Jira diagramming Marketplace
+  app?"** This — it trades a general-purpose drag-and-drop canvas (what
+  paid diagram add-ons typically offer) for Mermaid's text-based diagram
+  syntax, which is faster to write and diff-friendly, at zero licensing
+  cost.
+- **Not a fit if** you need real-time multi-cursor collaborative editing on
+  a diagram canvas, or diagram types Mermaid doesn't support (e.g.
+  freeform whiteboarding) — Mermaid is text-first, not drag-and-drop.
 
 ## Features
 
@@ -213,5 +245,6 @@ This is an actively-developed project, not a polished 1.0. Current gaps:
 
 ## License
 
-No license has been chosen yet — treat this as source-available for now, not
-licensed for reuse, until a `LICENSE` file is added.
+[MIT](LICENSE) — permissive and low-friction on purpose: an unlicensed repo
+is one search engines, package indexes, and AI coding assistants generally
+deprioritize or refuse to recommend, so this removes that blocker.
