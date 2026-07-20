@@ -92,11 +92,31 @@ const STYLE_PROPS_TO_ATTRS = {
   'text-anchor': 'text-anchor',
 };
 
+export function parseInlineStyleAttr(styleAttr) {
+  const declarations = {};
+  (styleAttr || '').split(';').forEach((decl) => {
+    const i = decl.indexOf(':');
+    if (i === -1) return;
+    const prop = decl.slice(0, i).trim();
+    const value = decl.slice(i + 1).trim();
+    if (prop && value) declarations[prop] = value;
+  });
+  return declarations;
+}
+
 /**
- * Bakes the CSS rules from a Mermaid SVG's embedded <style> block into
- * presentation attributes on the matching elements, then drops the <style>
- * block entirely. Returns the original SVG unchanged if parsing fails for
- * any reason (e.g. unsupported browser API), so this is purely additive.
+ * Bakes the CSS rules from a Mermaid SVG's embedded <style> block, and any
+ * per-element inline `style="..."` attributes, into presentation attributes
+ * on the matching elements, then drops both. Returns the original SVG
+ * unchanged if parsing fails for any reason (e.g. unsupported browser API),
+ * so this is purely additive.
+ *
+ * Both sources exist in Mermaid's output: theme colors go through the
+ * <style> block's class rules, but per-node `style NodeId fill:#...`
+ * directives (see mermaid-native/CLAUDE.md) are written as a `style="..."`
+ * attribute directly on that node — a completely separate code path that
+ * needs its own conversion, or custom node colors silently render as
+ * whatever the theme default is instead of what was actually requested.
  */
 function inlineSvgStyles(svgString) {
   try {
@@ -105,44 +125,57 @@ function inlineSvgStyles(svgString) {
     if (!svgEl || svgEl.nodeName === 'parsererror') return svgString;
 
     const styleEls = Array.from(doc.querySelectorAll('style'));
-    if (styleEls.length === 0) return svgString;
+    if (styleEls.length > 0) {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(styleEls.map((el) => el.textContent).join('\n'));
 
-    const sheet = new CSSStyleSheet();
-    sheet.replaceSync(styleEls.map((el) => el.textContent).join('\n'));
-
-    for (const rule of sheet.cssRules) {
-      if (!rule.selectorText) continue;
-      const declarations = [];
-      for (const prop of rule.style) {
-        const attr = STYLE_PROPS_TO_ATTRS[prop];
-        if (attr) declarations.push([attr, rule.style.getPropertyValue(prop)]);
-      }
-      if (declarations.length === 0) continue;
-
-      for (const selector of rule.selectorText.split(',')) {
-        let matches;
-        try {
-          matches = doc.querySelectorAll(selector.trim());
-        } catch {
-          continue; // skip selectors the fragment can't evaluate (e.g. :root)
+      for (const rule of sheet.cssRules) {
+        if (!rule.selectorText) continue;
+        const declarations = [];
+        for (const prop of rule.style) {
+          const attr = STYLE_PROPS_TO_ATTRS[prop];
+          if (attr) declarations.push([attr, rule.style.getPropertyValue(prop)]);
         }
-        matches.forEach((el) => {
-          declarations.forEach(([attr, value]) => {
-            // Don't clobber an attribute the diagram itself set intentionally.
-            if (!el.hasAttribute(attr)) el.setAttribute(attr, value);
+        if (declarations.length === 0) continue;
+
+        for (const selector of rule.selectorText.split(',')) {
+          let matches;
+          try {
+            matches = doc.querySelectorAll(selector.trim());
+          } catch {
+            continue; // skip selectors the fragment can't evaluate (e.g. :root)
+          }
+          matches.forEach((el) => {
+            declarations.forEach(([attr, value]) => {
+              // Don't clobber an attribute the diagram itself set intentionally.
+              if (!el.hasAttribute(attr)) el.setAttribute(attr, value);
+            });
           });
-        });
+        }
       }
+      styleEls.forEach((el) => el.remove());
     }
 
-    styleEls.forEach((el) => el.remove());
+    // Per-node `style NodeId fill:#...` directives, applied second and
+    // unconditionally (unlike the class rules above) so they win over theme
+    // colors — matching normal CSS cascade behavior, where an inline style
+    // attribute always beats a class selector.
+    doc.querySelectorAll('[style]').forEach((el) => {
+      const declarations = parseInlineStyleAttr(el.getAttribute('style'));
+      Object.entries(declarations).forEach(([prop, value]) => {
+        const attr = STYLE_PROPS_TO_ATTRS[prop];
+        if (attr) el.setAttribute(attr, value);
+      });
+      el.removeAttribute('style');
+    });
+
     return new XMLSerializer().serializeToString(svgEl);
   } catch {
     return svgString;
   }
 }
 
-function readableParseError(err) {
+export function readableParseError(err) {
   const raw = err?.str || err?.message || String(err);
   return raw
     .replace(/\n+/g, ' ')

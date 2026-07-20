@@ -50,6 +50,58 @@ body {
   padding: 24px;
 }
 
+/* --- Named sections (grouping) --- */
+
+.diagram-section {
+  margin-bottom: 16px;
+}
+
+.section-header {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 4px;
+  font: inherit;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.section-header:hover {
+  background: var(--color-subtle-bg);
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-subtle);
+}
+
+.section-count {
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  background: var(--color-subtle-bg);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.diagram-section-body {
+  padding-left: 4px;
+  border-left: 2px solid var(--color-border);
+  margin-left: 8px;
+}
+
+.diagram-section-body .diagram-card {
+  margin-left: 8px;
+}
+
 /* --- Diagram card --- */
 
 .diagram-card {
@@ -93,6 +145,27 @@ body {
   flex-shrink: 0;
 }
 
+.collapse-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  color: var(--color-text-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.collapse-toggle:hover {
+  background: var(--color-subtle-bg-hover);
+}
+
 .diagram-card-body-edit {
   padding: 10px;
 }
@@ -114,6 +187,11 @@ body {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text-subtle);
+}
+
+.section-input {
+  width: 140px;
+  flex: none;
 }
 
 .editor-split {
@@ -257,6 +335,14 @@ body {
 .btn:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 1px;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn:disabled:hover {
+  background: var(--color-subtle-bg);
 }
 
 .btn-primary {

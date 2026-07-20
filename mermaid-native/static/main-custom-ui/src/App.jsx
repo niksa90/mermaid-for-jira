@@ -5,6 +5,10 @@ import SectionMessage from '@atlaskit/section-message';
 import TrashIcon from '@atlaskit/icon/glyph/trash';
 import EditIcon from '@atlaskit/icon/glyph/edit';
 import CheckIcon from '@atlaskit/icon/glyph/check';
+import ArrowUpIcon from '@atlaskit/icon/glyph/arrow-up';
+import ArrowDownIcon from '@atlaskit/icon/glyph/arrow-down';
+import ChevronDownIcon from '@atlaskit/icon/glyph/chevron-down';
+import ChevronRightIcon from '@atlaskit/icon/glyph/chevron-right';
 import DiagramView from '../../../src/DiagramView';
 import DiagramErrorBoundary from '../../../src/ErrorBoundary';
 import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
@@ -29,11 +33,39 @@ function newDiagram() {
     label: 'New diagram',
     source: 'flowchart TD\n  A[Start] --> B[End]',
     theme: 'default',
+    section: '',
   };
 }
 
 function themeLabel(theme) {
   return theme.charAt(0).toUpperCase() + theme.slice(1);
+}
+
+/**
+ * Groups diagrams by their `section` field for rendering, without changing
+ * how they're stored — `diagrams` stays a flat array (order = real,
+ * persisted content), grouping is purely a render-time view over it. A
+ * diagram with no section renders standalone; diagrams sharing a section
+ * name are clustered together the first time that name appears, regardless
+ * of where else in the array a same-named diagram shows up later.
+ */
+function buildRenderGroups(diagramsArr) {
+  const groups = [];
+  const sectionAt = new Map();
+  diagramsArr.forEach((diagram, index) => {
+    const section = (diagram.section || '').trim();
+    if (!section) {
+      groups.push({ type: 'standalone', diagram, index });
+      return;
+    }
+    if (sectionAt.has(section)) {
+      groups[sectionAt.get(section)].items.push({ diagram, index });
+    } else {
+      sectionAt.set(section, groups.length);
+      groups.push({ type: 'section', name: section, items: [{ diagram, index }] });
+    }
+  });
+  return groups;
 }
 
 export default function App() {
@@ -44,6 +76,24 @@ export default function App() {
   // the persisted object so toggling it never costs a resolver invocation
   // (a real Jira REST write) or counts against Forge function GB-seconds.
   const [modes, setModes] = useState({});
+  // Collapsed-in-display-mode state — like `modes`, purely a view
+  // preference, not diagram content, so it's client-only and never costs a
+  // resolver invocation.
+  const [collapsed, setCollapsed] = useState({});
+  // Collapsed named-section state — same story: a view preference over the
+  // `section` field, not content in its own right, so it isn't persisted.
+  const [sectionCollapsed, setSectionCollapsed] = useState({});
+  // In-progress text for a diagram's Section field while it's focused.
+  // Grouping (buildRenderGroups) reacts to diagram.section, and each
+  // distinct section name gets its own wrapper element keyed by that name
+  // — if diagram.section updated on every keystroke, every character typed
+  // would move the diagram into a brand-new wrapper (e.g. "A" then "Ar"
+  // then "Arc"...), which React can't reconcile as "the same input that
+  // moved" since its parent element is now a different one. That unmounts
+  // and remounts the input on every keystroke, dropping focus. Keeping the
+  // live-typed text here and only committing to diagram.section on blur
+  // keeps the input's DOM node stable while typing.
+  const [sectionDraft, setSectionDraft] = useState({});
   // idle | pending | saving | saved | error | too-large
   const [saveState, setSaveState] = useState('idle');
   const [errorMessage, setErrorMessage] = useState(null);
@@ -80,7 +130,7 @@ export default function App() {
           issueKeyRef.current = key;
           setIssueKey(key);
           baseSnapshotRef.current = data.snapshot;
-          const loaded = (data.diagrams || []).map((d) => ({ theme: 'default', ...d }));
+          const loaded = (data.diagrams || []).map((d) => ({ theme: 'default', section: '', ...d }));
           setDiagrams(loaded);
           latestDiagramsRef.current = loaded;
           setModes(Object.fromEntries(loaded.map((d) => [d.id, 'display'])));
@@ -175,7 +225,7 @@ export default function App() {
   }
 
   function resolveConflictDiscardMine() {
-    const theirs = (conflict?.diagrams || []).map((d) => ({ theme: 'default', ...d }));
+    const theirs = (conflict?.diagrams || []).map((d) => ({ theme: 'default', section: '', ...d }));
     baseSnapshotRef.current = stableStringify(conflict);
     setDiagrams(theirs);
     latestDiagramsRef.current = theirs;
@@ -247,6 +297,23 @@ export default function App() {
     setModes((prev) => ({ ...prev, [id]: mode }));
   }
 
+  function toggleCollapsed(id) {
+    setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  function toggleSectionCollapsed(name) {
+    setSectionCollapsed((prev) => ({ ...prev, [name]: !prev[name] }));
+  }
+
+  function moveDiagram(id, direction) {
+    const index = diagrams.findIndex((d) => d.id === id);
+    const target = index + direction;
+    if (index === -1 || target < 0 || target >= diagrams.length) return;
+    const next = [...diagrams];
+    [next[index], next[target]] = [next[target], next[index]];
+    persist(next, { immediate: true });
+  }
+
   if (status === 'loading') {
     return (
       <div className="board-container board-center">
@@ -268,6 +335,174 @@ export default function App() {
   const sizeBytes = payloadSizeBytes(diagrams);
   const nearSizeLimit =
     saveState !== 'too-large' && sizeBytes > MAX_PROPERTY_BYTES * SIZE_WARNING_RATIO;
+
+  function renderDiagramCard(diagram, diagramIndex) {
+    const mode = modes[diagram.id] || 'display';
+    const isCollapsed = mode === 'display' && !!collapsed[diagram.id];
+    return (
+      <div className="diagram-card" key={diagram.id}>
+        <div className="diagram-card-header">
+          {mode === 'display' && (
+            <button
+              type="button"
+              className="collapse-toggle"
+              onClick={() => toggleCollapsed(diagram.id)}
+              aria-label={isCollapsed ? 'Expand diagram' : 'Collapse diagram'}
+            >
+              {isCollapsed ? <ChevronRightIcon label="" /> : <ChevronDownIcon label="" />}
+            </button>
+          )}
+          {mode === 'edit' ? (
+            <input
+              className="text-input diagram-label-input"
+              value={diagram.label}
+              onChange={(e) => updateDiagram(diagram.id, { label: e.target.value })}
+              onBlur={flushSave}
+              placeholder="Diagram label"
+            />
+          ) : (
+            <h3 className="diagram-title">{diagram.label || 'Untitled diagram'}</h3>
+          )}
+
+          <div className="diagram-card-actions">
+            {pendingRemoveId === diagram.id ? (
+              <>
+                <span className="confirm-remove-label">Remove this diagram?</span>
+                <button type="button" className="btn btn-danger" onClick={() => confirmRemove(diagram.id)}>
+                  Remove
+                </button>
+                <button type="button" className="btn btn-subtle" onClick={cancelRemove}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-subtle btn-icon"
+                  title="Move up"
+                  aria-label="Move diagram up"
+                  disabled={diagramIndex === 0}
+                  onClick={() => moveDiagram(diagram.id, -1)}
+                >
+                  <ArrowUpIcon label="" size="small" />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-subtle btn-icon"
+                  title="Move down"
+                  aria-label="Move diagram down"
+                  disabled={diagramIndex === diagrams.length - 1}
+                  onClick={() => moveDiagram(diagram.id, 1)}
+                >
+                  <ArrowDownIcon label="" size="small" />
+                </button>
+                {mode === 'edit' ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-icon-text"
+                    onClick={() => setMode(diagram.id, 'display')}
+                  >
+                    <CheckIcon label="" size="small" />
+                    Done
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-subtle btn-icon-text"
+                    onClick={() => setMode(diagram.id, 'edit')}
+                  >
+                    <EditIcon label="" size="small" />
+                    Edit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-subtle btn-icon btn-remove"
+                  title="Remove diagram"
+                  aria-label="Remove diagram"
+                  onClick={() => requestRemove(diagram.id)}
+                >
+                  <TrashIcon label="" size="small" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {mode === 'edit' ? (
+          <div className="diagram-card-body diagram-card-body-edit">
+            <div className="editor-toolbar">
+              <label className="style-picker-label" htmlFor={`theme-${diagram.id}`}>
+                Style
+              </label>
+              <select
+                id={`theme-${diagram.id}`}
+                className="select-input"
+                value={diagram.theme}
+                onChange={(e) => updateDiagram(diagram.id, { theme: e.target.value }, { immediate: true })}
+              >
+                {MERMAID_THEMES.map((theme) => (
+                  <option key={theme} value={theme}>
+                    {themeLabel(theme)}
+                  </option>
+                ))}
+              </select>
+              <label className="style-picker-label" htmlFor={`section-${diagram.id}`}>
+                Section
+              </label>
+              <input
+                id={`section-${diagram.id}`}
+                className="text-input section-input"
+                value={sectionDraft[diagram.id] ?? diagram.section}
+                onChange={(e) =>
+                  setSectionDraft((prev) => ({ ...prev, [diagram.id]: e.target.value }))
+                }
+                onBlur={(e) => {
+                  setSectionDraft((prev) => {
+                    const next = { ...prev };
+                    delete next[diagram.id];
+                    return next;
+                  });
+                  // immediate: true both saves right away (rather than
+                  // waiting on the debounce) and — same code path as
+                  // add/remove/theme — clears any already-pending debounced
+                  // save first, so this doesn't also fire a second,
+                  // redundant save ~600ms later.
+                  updateDiagram(diagram.id, { section: e.target.value }, { immediate: true });
+                }}
+                placeholder="None"
+              />
+            </div>
+            <div className="editor-split">
+              <div className="editor-pane">
+                <textarea
+                  className="mermaid-textarea"
+                  value={diagram.source}
+                  onChange={(e) => updateDiagram(diagram.id, { source: e.target.value })}
+                  onBlur={flushSave}
+                  spellCheck={false}
+                />
+              </div>
+              <div className="preview-pane">
+                <DiagramErrorBoundary>
+                  <DiagramView source={diagram.source} theme={diagram.theme} idPrefix={diagram.id} />
+                </DiagramErrorBoundary>
+              </div>
+            </div>
+          </div>
+        ) : (
+          !isCollapsed && (
+            <div className="diagram-card-body diagram-card-body-display">
+              <DiagramErrorBoundary>
+                <DiagramView source={diagram.source} theme={diagram.theme} idPrefix={diagram.id} />
+              </DiagramErrorBoundary>
+            </div>
+          )
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="board-container">
@@ -313,125 +548,35 @@ export default function App() {
         </SectionMessage>
       )}
 
-      {diagrams.map((diagram) => {
-        const mode = modes[diagram.id] || 'display';
-        return (
-        <div className="diagram-card" key={diagram.id}>
-          <div className="diagram-card-header">
-            {mode === 'edit' ? (
-              <input
-                className="text-input diagram-label-input"
-                value={diagram.label}
-                onChange={(e) => updateDiagram(diagram.id, { label: e.target.value })}
-                onBlur={flushSave}
-                placeholder="Diagram label"
-              />
-            ) : (
-              <h3 className="diagram-title">{diagram.label || 'Untitled diagram'}</h3>
-            )}
-
-            <div className="diagram-card-actions">
-              {pendingRemoveId === diagram.id ? (
-                <>
-                  <span className="confirm-remove-label">Remove this diagram?</span>
-                  <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => confirmRemove(diagram.id)}
-                  >
-                    Remove
-                  </button>
-                  <button type="button" className="btn btn-subtle" onClick={cancelRemove}>
-                    Cancel
-                  </button>
-                </>
+      {buildRenderGroups(diagrams).map((group) =>
+        group.type === 'standalone' ? (
+          renderDiagramCard(group.diagram, group.index)
+        ) : (
+          <div className="diagram-section" key={`section-${group.name}`}>
+            <button
+              type="button"
+              className="section-header"
+              onClick={() => toggleSectionCollapsed(group.name)}
+              aria-label={
+                sectionCollapsed[group.name] ? `Expand ${group.name}` : `Collapse ${group.name}`
+              }
+            >
+              {sectionCollapsed[group.name] ? (
+                <ChevronRightIcon label="" />
               ) : (
-                <>
-                  {mode === 'edit' ? (
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-icon-text"
-                      onClick={() => setMode(diagram.id, 'display')}
-                    >
-                      <CheckIcon label="" size="small" />
-                      Done
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-subtle btn-icon-text"
-                      onClick={() => setMode(diagram.id, 'edit')}
-                    >
-                      <EditIcon label="" size="small" />
-                      Edit
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="btn btn-subtle btn-icon btn-remove"
-                    title="Remove diagram"
-                    aria-label="Remove diagram"
-                    onClick={() => requestRemove(diagram.id)}
-                  >
-                    <TrashIcon label="" size="small" />
-                  </button>
-                </>
+                <ChevronDownIcon label="" />
               )}
-            </div>
+              <span className="section-title">{group.name}</span>
+              <span className="section-count">{group.items.length}</span>
+            </button>
+            {!sectionCollapsed[group.name] && (
+              <div className="diagram-section-body">
+                {group.items.map(({ diagram, index }) => renderDiagramCard(diagram, index))}
+              </div>
+            )}
           </div>
-
-          {mode === 'edit' ? (
-            <div className="diagram-card-body diagram-card-body-edit">
-              <div className="editor-toolbar">
-                <label className="style-picker-label" htmlFor={`theme-${diagram.id}`}>
-                  Style
-                </label>
-                <select
-                  id={`theme-${diagram.id}`}
-                  className="select-input"
-                  value={diagram.theme}
-                  onChange={(e) =>
-                    updateDiagram(diagram.id, { theme: e.target.value }, { immediate: true })
-                  }
-                >
-                  {MERMAID_THEMES.map((theme) => (
-                    <option key={theme} value={theme}>
-                      {themeLabel(theme)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="editor-split">
-                <div className="editor-pane">
-                  <textarea
-                    className="mermaid-textarea"
-                    value={diagram.source}
-                    onChange={(e) => updateDiagram(diagram.id, { source: e.target.value })}
-                    onBlur={flushSave}
-                    spellCheck={false}
-                  />
-                </div>
-                <div className="preview-pane">
-                  <DiagramErrorBoundary>
-                    <DiagramView
-                      source={diagram.source}
-                      theme={diagram.theme}
-                      idPrefix={diagram.id}
-                    />
-                  </DiagramErrorBoundary>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="diagram-card-body diagram-card-body-display">
-              <DiagramErrorBoundary>
-                <DiagramView source={diagram.source} theme={diagram.theme} idPrefix={diagram.id} />
-              </DiagramErrorBoundary>
-            </div>
-          )}
-        </div>
-        );
-      })}
+        )
+      )}
 
       <div className="board-actions">
         <button type="button" className="btn btn-primary" onClick={addDiagram}>
