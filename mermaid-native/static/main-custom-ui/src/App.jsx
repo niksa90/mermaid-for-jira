@@ -8,9 +8,20 @@ import CheckIcon from '@atlaskit/icon/glyph/check';
 import DiagramView from '../../../src/DiagramView';
 import DiagramErrorBoundary from '../../../src/ErrorBoundary';
 import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
+import { stableStringify } from '../../../src/stable-json';
 import './styles.css';
 
 const SAVE_DEBOUNCE_MS = 600;
+const UNDO_TIMEOUT_MS = 8000;
+// Jira Cloud's documented entity-property value size limit (also enforced
+// resolver-side — this is just so the UI can warn before attempting a save
+// that's guaranteed to fail): https://developer.atlassian.com/cloud/jira/platform/jira-entity-properties/
+const MAX_PROPERTY_BYTES = 32768;
+const SIZE_WARNING_RATIO = 0.85;
+
+function payloadSizeBytes(diagramsArr) {
+  return new TextEncoder().encode(JSON.stringify({ diagrams: diagramsArr })).length;
+}
 
 function newDiagram() {
   return {
@@ -33,12 +44,29 @@ export default function App() {
   // the persisted object so toggling it never costs a resolver invocation
   // (a real Jira REST write) or counts against Forge function GB-seconds.
   const [modes, setModes] = useState({});
-  const [saveState, setSaveState] = useState('idle'); // idle | pending | saving | saved | error
+  // idle | pending | saving | saved | error | too-large
+  const [saveState, setSaveState] = useState('idle');
   const [errorMessage, setErrorMessage] = useState(null);
+  // Set when a save was rejected because someone else changed this issue's
+  // diagrams since we last read them; holds the server's current value so
+  // the user can choose how to resolve it (see resolveConflict*).
+  const [conflict, setConflict] = useState(null);
+  // Diagram id whose remove button is showing an inline "are you sure?"
+  // instead of removing immediately on click.
+  const [pendingRemoveId, setPendingRemoveId] = useState(null);
+  // Most recently removed diagram, kept around briefly so the removal can
+  // be undone: { diagram, index } — index is where it lived so undo puts it
+  // back in the same place rather than at the end of the list.
+  const [undoState, setUndoState] = useState(null);
 
   const issueKeyRef = useRef(null);
   const saveTimeoutRef = useRef(null);
+  const undoTimeoutRef = useRef(null);
   const latestDiagramsRef = useRef([]);
+  // What we believe the server currently holds — used for optimistic
+  // concurrency (see resolvers/index.js). Updated on load and after every
+  // successful save; never derived from our own locally-edited diagrams.
+  const baseSnapshotRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +79,7 @@ export default function App() {
         if (!cancelled) {
           issueKeyRef.current = key;
           setIssueKey(key);
+          baseSnapshotRef.current = data.snapshot;
           const loaded = (data.diagrams || []).map((d) => ({ theme: 'default', ...d }));
           setDiagrams(loaded);
           latestDiagramsRef.current = loaded;
@@ -78,18 +107,29 @@ export default function App() {
         clearTimeout(saveTimeoutRef.current);
         flushSave();
       }
+      if (undoTimeoutRef.current) {
+        clearTimeout(undoTimeoutRef.current);
+      }
     },
     []
   );
 
-  async function flushSave() {
+  async function flushSave({ force = false } = {}) {
     if (!issueKeyRef.current) return;
     setSaveState('saving');
     try {
-      await invoke('setFieldValue', {
+      const result = await invoke('setFieldValue', {
         issueKey: issueKeyRef.current,
         value: { diagrams: latestDiagramsRef.current },
+        baseSnapshot: baseSnapshotRef.current,
+        force,
       });
+      if (result.conflict) {
+        setConflict(result.current);
+        setSaveState('idle');
+        return;
+      }
+      baseSnapshotRef.current = result.snapshot;
       setErrorMessage(null);
       setSaveState('saved');
     } catch (err) {
@@ -107,6 +147,17 @@ export default function App() {
       saveTimeoutRef.current = null;
     }
 
+    if (payloadSizeBytes(next) > MAX_PROPERTY_BYTES) {
+      // Don't even attempt a save that's guaranteed to be rejected — the
+      // resolver enforces this too, but failing fast here avoids a wasted
+      // invocation and gives immediate feedback.
+      setSaveState('too-large');
+      setErrorMessage(
+        `These diagrams are too large to save (${(payloadSizeBytes(next) / 1024).toFixed(1)} KB of a 32 KB Jira limit). Remove or shrink a diagram to save your changes.`
+      );
+      return;
+    }
+
     if (immediate) {
       flushSave();
     } else {
@@ -116,6 +167,22 @@ export default function App() {
         flushSave();
       }, SAVE_DEBOUNCE_MS);
     }
+  }
+
+  function resolveConflictKeepMine() {
+    setConflict(null);
+    flushSave({ force: true });
+  }
+
+  function resolveConflictDiscardMine() {
+    const theirs = (conflict?.diagrams || []).map((d) => ({ theme: 'default', ...d }));
+    baseSnapshotRef.current = stableStringify(conflict);
+    setDiagrams(theirs);
+    latestDiagramsRef.current = theirs;
+    setModes(Object.fromEntries(theirs.map((d) => [d.id, 'display'])));
+    setConflict(null);
+    setSaveState('idle');
+    setErrorMessage(null);
   }
 
   function addDiagram() {
@@ -131,7 +198,20 @@ export default function App() {
     );
   }
 
-  function removeDiagram(id) {
+  function requestRemove(id) {
+    setPendingRemoveId(id);
+  }
+
+  function cancelRemove() {
+    setPendingRemoveId(null);
+  }
+
+  function confirmRemove(id) {
+    const index = diagrams.findIndex((d) => d.id === id);
+    if (index === -1) return;
+    const removedDiagram = diagrams[index];
+
+    setPendingRemoveId(null);
     setModes((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -141,6 +221,26 @@ export default function App() {
       diagrams.filter((d) => d.id !== id),
       { immediate: true }
     );
+
+    if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+    setUndoState({ diagram: removedDiagram, index });
+    undoTimeoutRef.current = setTimeout(() => {
+      undoTimeoutRef.current = null;
+      setUndoState(null);
+    }, UNDO_TIMEOUT_MS);
+  }
+
+  function undoRemove() {
+    if (!undoState) return;
+    if (undoTimeoutRef.current) {
+      clearTimeout(undoTimeoutRef.current);
+      undoTimeoutRef.current = null;
+    }
+    const restored = [...diagrams];
+    restored.splice(Math.min(undoState.index, restored.length), 0, undoState.diagram);
+    setModes((prev) => ({ ...prev, [undoState.diagram.id]: 'display' }));
+    setUndoState(null);
+    persist(restored, { immediate: true });
   }
 
   function setMode(id, mode) {
@@ -165,12 +265,46 @@ export default function App() {
     );
   }
 
+  const sizeBytes = payloadSizeBytes(diagrams);
+  const nearSizeLimit =
+    saveState !== 'too-large' && sizeBytes > MAX_PROPERTY_BYTES * SIZE_WARNING_RATIO;
+
   return (
     <div className="board-container">
+      {conflict && (
+        <SectionMessage appearance="warning" title="Someone else changed these diagrams">
+          <p>
+            These diagrams were updated elsewhere while you were editing. Keeping your changes
+            will overwrite theirs; discarding will replace what you see here with their latest
+            version.
+          </p>
+          <div className="conflict-actions">
+            <button type="button" className="btn btn-primary" onClick={resolveConflictKeepMine}>
+              Keep my changes
+            </button>
+            <button type="button" className="btn btn-subtle" onClick={resolveConflictDiscardMine}>
+              Discard mine, use theirs
+            </button>
+          </div>
+        </SectionMessage>
+      )}
+
       {errorMessage && (
-        <SectionMessage appearance="warning" title="Save failed">
+        <SectionMessage
+          appearance="warning"
+          title={saveState === 'too-large' ? 'Diagrams are too large to save' : 'Save failed'}
+        >
           <p>{errorMessage}</p>
         </SectionMessage>
+      )}
+
+      {undoState && (
+        <div className="undo-banner">
+          <span>Diagram removed.</span>
+          <button type="button" className="btn btn-subtle" onClick={undoRemove}>
+            Undo
+          </button>
+        </div>
       )}
 
       {diagrams.length === 0 && (
@@ -197,34 +331,52 @@ export default function App() {
             )}
 
             <div className="diagram-card-actions">
-              {mode === 'edit' ? (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-icon-text"
-                  onClick={() => setMode(diagram.id, 'display')}
-                >
-                  <CheckIcon label="" size="small" />
-                  Done
-                </button>
+              {pendingRemoveId === diagram.id ? (
+                <>
+                  <span className="confirm-remove-label">Remove this diagram?</span>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => confirmRemove(diagram.id)}
+                  >
+                    Remove
+                  </button>
+                  <button type="button" className="btn btn-subtle" onClick={cancelRemove}>
+                    Cancel
+                  </button>
+                </>
               ) : (
-                <button
-                  type="button"
-                  className="btn btn-subtle btn-icon-text"
-                  onClick={() => setMode(diagram.id, 'edit')}
-                >
-                  <EditIcon label="" size="small" />
-                  Edit
-                </button>
+                <>
+                  {mode === 'edit' ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-icon-text"
+                      onClick={() => setMode(diagram.id, 'display')}
+                    >
+                      <CheckIcon label="" size="small" />
+                      Done
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-subtle btn-icon-text"
+                      onClick={() => setMode(diagram.id, 'edit')}
+                    >
+                      <EditIcon label="" size="small" />
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-subtle btn-icon btn-remove"
+                    title="Remove diagram"
+                    aria-label="Remove diagram"
+                    onClick={() => requestRemove(diagram.id)}
+                  >
+                    <TrashIcon label="" size="small" />
+                  </button>
+                </>
               )}
-              <button
-                type="button"
-                className="btn btn-subtle btn-icon btn-remove"
-                title="Remove diagram"
-                aria-label="Remove diagram"
-                onClick={() => removeDiagram(diagram.id)}
-              >
-                <TrashIcon label="" size="small" />
-              </button>
             </div>
           </div>
 
@@ -294,7 +446,13 @@ export default function App() {
           {saveState === 'pending' && 'Editing…'}
           {saveState === 'saved' && '✓ Saved'}
           {saveState === 'error' && 'Save failed'}
+          {saveState === 'too-large' && 'Too large to save'}
         </span>
+        {nearSizeLimit && (
+          <span className="save-status size-warning">
+            {(sizeBytes / 1024).toFixed(1)} KB / {(MAX_PROPERTY_BYTES / 1024).toFixed(0)} KB
+          </span>
+        )}
       </div>
     </div>
   );

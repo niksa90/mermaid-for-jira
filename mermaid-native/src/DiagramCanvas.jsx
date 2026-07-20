@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import VidFullScreenOnIcon from '@atlaskit/icon/glyph/vid-full-screen-on';
+import VidFullScreenOffIcon from '@atlaskit/icon/glyph/vid-full-screen-off';
 
 const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.2;
@@ -19,12 +21,14 @@ function clamp(value, min, max) {
  * plain SVG attribute, so it isn't affected.
  */
 export default function DiagramCanvas({ svg }) {
+  const wrapRef = useRef(null);
   const containerRef = useRef(null);
   const svgElRef = useRef(null);
   const baseViewBoxRef = useRef(null); // natural {minX, minY, width, height}
   const viewRef = useRef(null); // current {minX, minY, width, height}
   const dragRef = useRef(null);
   const [isPanning, setIsPanning] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -144,8 +148,49 @@ export default function DiagramCanvas({ svg }) {
     }
   }
 
+  // Fullscreen: a CSS overlay covering the whole Custom UI panel is the
+  // guaranteed baseline (position:fixed, no permissions needed). Real
+  // browser Fullscreen API (taking over the whole screen, not just the
+  // panel) is attempted on top of that as a best-effort upgrade — Forge
+  // controls this iframe's embedding, not us, and whether Jira grants it
+  // `allow="fullscreen"` isn't something this app can control or detect in
+  // advance, so a rejected/unsupported requestFullscreen() is silently
+  // ignored rather than treated as an error.
+  function toggleFullscreen() {
+    setFullscreen((prev) => {
+      const next = !prev;
+      if (next) {
+        wrapRef.current?.requestFullscreen?.().catch(() => {});
+      } else if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      setFullscreen(!!document.fullscreenElement && document.fullscreenElement === wrapRef.current);
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    if (!fullscreen) return undefined;
+    function onKeyDown(e) {
+      if (e.key === 'Escape') toggleFullscreen();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen]);
+
   return (
-    <div className="diagram-canvas-wrap">
+    <div
+      ref={wrapRef}
+      className={`diagram-canvas-wrap${fullscreen ? ' diagram-canvas-wrap-fullscreen' : ''}`}
+    >
       <div
         ref={containerRef}
         className={`diagram-canvas${isPanning ? ' diagram-canvas-panning' : ''}`}
@@ -176,6 +221,18 @@ export default function DiagramCanvas({ svg }) {
           onClick={() => zoomAt(ZOOM_STEP)}
         >
           +
+        </button>
+        <button
+          type="button"
+          className="btn btn-subtle btn-icon"
+          title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          onClick={toggleFullscreen}
+        >
+          {fullscreen ? (
+            <VidFullScreenOffIcon label="" size="small" />
+          ) : (
+            <VidFullScreenOnIcon label="" size="small" />
+          )}
         </button>
       </div>
     </div>

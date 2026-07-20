@@ -14,7 +14,9 @@
   --color-subtle-bg-hover: #dcdfe4;
   --color-subtle-bg-active: #b3b9c4;
 
+  --color-danger-bg: #ae2e24;
   --color-danger-bg-hover: #ffeceb;
+  --color-danger-bg-solid-hover: #7a2116;
   --color-danger-text: #ae2e24;
 
   --color-border: #dfe1e6;
@@ -183,6 +185,22 @@ body {
   cursor: grabbing;
 }
 
+/* Fullscreen: guaranteed baseline is this fixed overlay covering the whole
+   Custom UI panel (position:fixed escapes .preview-pane's overflow:hidden
+   and .board-container's own scroll box — none of their ancestors set
+   transform/filter/contain, which are the only things that would trap a
+   fixed-position descendant). True browser Fullscreen API is layered on
+   top of this on a best-effort basis in DiagramCanvas.jsx; when it isn't
+   available this class alone still reads as "fullscreen" within the panel. */
+.diagram-canvas-wrap-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #fff;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
 .diagram-canvas svg {
   display: block;
   width: 100%;
@@ -273,6 +291,20 @@ body {
   color: var(--color-danger-text);
 }
 
+.btn-danger {
+  background: var(--color-danger-bg);
+  color: var(--color-on-primary);
+}
+.btn-danger:hover {
+  background: var(--color-danger-bg-solid-hover);
+}
+
+.confirm-remove-label {
+  font-size: 13px;
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+}
+
 /* --- Inputs --- */
 
 .text-input,
@@ -322,6 +354,34 @@ body {
   color: var(--color-success-text);
 }
 
-.save-status-error {
+.save-status-error,
+.save-status-too-large {
   color: var(--color-danger-text);
+}
+
+.size-warning {
+  color: var(--color-danger-text);
+}
+
+/* --- Conflict banner --- */
+
+.conflict-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* --- Undo banner --- */
+
+.undo-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--color-subtle-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--color-text);
 }
