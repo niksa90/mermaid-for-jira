@@ -144,10 +144,24 @@ attributes — both of which Mermaid's theming normally relies on.
 
 Current workaround, in `mermaid-native/src/mermaid-renderer.js`:
 `htmlLabels: false` everywhere (forces plain SVG `<text>` instead of
-foreignObject/HTML labels), plus `inlineSvgStyles()`, which parses the
-`<style>` block Mermaid emits and bakes each rule into presentation
-attributes (`fill`, `stroke`, `font-family`, ...) on the matching SVG
-elements, then deletes the `<style>` block entirely.
+foreignObject/HTML labels), plus `inlineSvgStyles()`, which handles **two
+separate sources** of style Mermaid emits, both needing conversion:
+1. The `<style>` block's CSS class rules (theme colors) — parsed and baked
+   into presentation attributes on matching elements.
+2. Per-node `style NodeId fill:#...,stroke:...,color:...` directives (a
+   diagram author styling one specific node) — these come out as a literal
+   `style="..."` attribute *directly on that element*, a completely
+   different code path from the `<style>` block. Easy to miss: an earlier
+   version of this function only handled (1), so per-node custom colors
+   silently rendered as flat theme-default colors instead of what was
+   actually requested — the CSP dropped the inline `style` attribute and
+   nothing converted it. Fixed by also parsing `[style]` elements
+   (`parseInlineStyleAttr`) and applying those *after* the class-rule pass,
+   unconditionally overwriting (not guarded by `!hasAttribute`) — a per-node
+   inline style should win over a theme class rule, matching normal CSS
+   cascade/specificity, and only an unconditional overwrite reproduces that
+   once everything's flattened into plain attributes with no cascade of
+   their own.
 
 **Only the properties listed in `STYLE_PROPS_TO_ATTRS` survive this
 translation.** Any diagram-styling feature (theme picker, per-node color
@@ -235,7 +249,46 @@ inputs are hand-styled plain HTML, not Atlaskit components (see "Atlaskit
 components and CSP"). The resolver has optimistic-concurrency conflict
 detection and entity-property size-limit enforcement (see Architecture).
 Node/Forge CLI versions are pinned (`.nvmrc`, `@forge/cli@^13`) to versions
-verified to actually work together on this machine.
+verified to actually work together on this machine. Diagrams can be
+reordered (up/down buttons; changes array order, which is real content, so
+it persists) and collapsed to just their header in display mode (client-only
+state, like edit/display mode — see the GB-seconds note above). Diagrams can
+also be grouped into named, collapsible sections via a `section` string field
+on each diagram (real, persisted content — unlike collapse/edit-display
+state). Grouping is render-time only: `buildRenderGroups()` in `App.jsx`
+clusters diagrams sharing a section name wherever that name first appears in
+the flat array, but storage order, reorder (up/down), conflict detection,
+and the size-limit math all still operate on that same flat `diagrams`
+array, untouched by grouping. One known rough edge: the up/down reorder
+buttons move a diagram by flat-array index, not by position-within-its-group
+— moving a grouped diagram can visually jump it across a section boundary
+one step at a time rather than staying within the group. Not fixed
+intentionally (simpler, and not yet asked for); revisit if it's confusing in
+practice.
+
+**Gotcha already hit once:** the Section `<input>` cannot be wired straight
+to `diagram.section` via `onChange` — each render-group wrapper is keyed by
+the section name (`` key={`section-${group.name}`} ``), so every keystroke
+that changes the name (e.g. "A" → "Ar" → "Arc" while typing "Architecture")
+produces a *new* wrapper element. React can't reconcile that as "the same
+input, just moved" (its parent in the tree is now literally a different
+element), so it unmounts and remounts the input on every keystroke —
+dropping focus after each character. Fixed with a local `sectionDraft`
+buffer: the input shows/edits `sectionDraft[id] ?? diagram.section` and only
+commits to `diagram.section` (which drives grouping) on blur. If any other
+field ever needs to double as a grouping/structural key, it'll need the same
+draft-until-commit treatment — anything read by `buildRenderGroups` is
+unsafe to bind directly to a live-typing input's `onChange`. Pure-logic
+functions (`stable-json.js`, `mermaid-renderer.js`'s `withTheme`/
+`safeDiagramId`/`readableParseError`) have unit tests under `src/*.test.js`,
+run via `npm test` (Node's built-in test runner — no test framework
+dependency) and in CI (`.github/workflows/ci.yml`, runs on push/PR, no
+Atlassian credentials needed since it only does `npm test` + `npm run
+build`, deliberately not `forge lint`/`forge deploy`). Resolver logic
+(`getFieldValue`/`setFieldValue`) is *not* unit tested — it would require
+mocking `@forge/api`/`@forge/resolver`, which wasn't judged worth the
+fragility; its highest-risk piece (conflict comparison) is covered
+indirectly via `stable-json.test.js` instead.
 
 Remaining rough edges: no dark-mode/theme parity with Jira's own UI, flat
 diagram list with no reordering/grouping, no per-node/custom-color styling

@@ -8,6 +8,8 @@ image hosting, no screenshots pasted into descriptions, no paid add-on.
 Runs entirely on Atlassian's free Forge developer tier: no server to host,
 no database, no monthly bill.
 
+![Adding, editing, and grouping Mermaid diagrams in a Jira issue panel](docs/media/demo.gif)
+
 ## Features
 
 - **Multiple diagrams per issue**, each with its own label, source, and style
@@ -24,6 +26,11 @@ no database, no monthly bill.
   silently overwriting the other
 - **Confirm-before-delete plus undo**, so removing a diagram is never a
   one-click accident
+- **Reorder and collapse** diagrams — move them up/down, and collapse a
+  diagram to just its title when you don't need it expanded
+- **Named, collapsible sections**: give diagrams the same "Section" name to
+  group them together, with a header you can collapse to hide the whole
+  group at once
 - **$0 to run**: no external services, no paid Forge tier — see
   [How it works](#how-it-works)
 
@@ -46,6 +53,48 @@ view, backed by one small resolver function.
   of its own CSS into a real stylesheet at build time rather than injecting
   styles at runtime. See `CLAUDE.md` for the full detail if you're digging
   into the code.
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%">
+
+**Editing** — split source/preview, per-diagram style picker, and the
+"Section" field used for grouping.
+
+![Editing a flowchart, with the source editor next to a live preview](docs/media/flowchart_image_edit.png)
+
+</td>
+<td width="50%">
+
+**Confirm before delete** — removing a diagram always asks first.
+
+![An inline "Remove this diagram? Remove / Cancel" prompt](docs/media/flowchart_image_delete.png)
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Conflict detection** — if someone else changed the diagrams while you were
+editing, you're asked which version to keep instead of one silently
+overwriting the other.
+
+![A warning banner: "Someone else changed these diagrams", with "Keep my changes" and "Discard mine, use theirs" buttons](docs/media/overwrite_warning.png)
+
+</td>
+<td width="50%">
+
+**Rendered diagram** — custom per-node colors (via Mermaid's `style
+nodeId fill:#...` syntax) rendering correctly despite Forge's CSP normally
+blocking exactly this kind of styling.
+
+![A flowchart with custom-colored nodes: green Start, red Error Handler, blue Database, orange Cache Layer, purple Return Result](docs/media/flowchart_image.png)
+
+</td>
+</tr>
+</table>
 
 ## Prerequisites
 
@@ -117,6 +166,19 @@ component preview can still render wrong once deployed — always verify in an
 actual browser against your real Jira site, not just by trusting that the
 build succeeded.
 
+### Tests
+
+```bash
+npm test
+```
+
+Runs pure-logic unit tests (Node's built-in test runner — no extra
+dependency) covering the diagram-id/theme/error-message helpers and the
+snapshot-comparison logic behind conflict detection. UI/rendering code isn't
+unit tested; verify that in a real browser instead, for the CSP reasons
+above. CI (`.github/workflows/ci.yml`) runs `npm test` and `npm run build`
+on every push and pull request.
+
 ## Troubleshooting
 
 - **A `forge` command hangs or gives a confusing error about an unrelated
@@ -138,9 +200,13 @@ build succeeded.
 This is an actively-developed project, not a polished 1.0. Current gaps:
 
 - No dark-mode/theme parity with Jira's own UI
-- Flat diagram list — no reordering or grouping
-- Only Mermaid's built-in themes; no custom per-node/brand colors yet
-- No automated tests or CI
+- Reordering moves a diagram by its position in the overall list, not by
+  position within its section — moving a grouped diagram up/down can step it
+  across a section boundary rather than staying inside the group
+- Custom colors work via Mermaid's own `style nodeId fill:#...` syntax
+  typed directly into the source, but there's no color-picker UI for it —
+  only the built-in theme picker (Default/Neutral/Forest/Dark) has one
+- Only pure-logic unit tests — no UI/rendering or resolver-integration tests
 - All diagrams for an issue share a single Jira entity property, which has a
   32 KB size limit (the app warns you as you approach it, and blocks a save
   that would exceed it, rather than failing silently)
