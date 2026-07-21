@@ -352,12 +352,12 @@ export default function App() {
   function addDiagram() {
     const diagram = newDiagram(effectiveDark ? 'dark' : 'default');
     setModes((prev) => ({ ...prev, [diagram.id]: 'edit' }));
-    persist([...diagrams, diagram], { immediate: true });
+    persist([...latestDiagramsRef.current, diagram], { immediate: true });
   }
 
   function updateDiagram(id, patch, opts) {
     persist(
-      diagrams.map((d) => (d.id === id ? { ...d, ...patch } : d)),
+      latestDiagramsRef.current.map((d) => (d.id === id ? { ...d, ...patch } : d)),
       opts
     );
   }
@@ -371,9 +371,9 @@ export default function App() {
   }
 
   function confirmRemove(id) {
-    const index = diagrams.findIndex((d) => d.id === id);
+    const index = latestDiagramsRef.current.findIndex((d) => d.id === id);
     if (index === -1) return;
-    const removedDiagram = diagrams[index];
+    const removedDiagram = latestDiagramsRef.current[index];
 
     setPendingRemoveId(null);
     setModes((prev) => {
@@ -382,7 +382,7 @@ export default function App() {
       return next;
     });
     persist(
-      diagrams.filter((d) => d.id !== id),
+      latestDiagramsRef.current.filter((d) => d.id !== id),
       { immediate: true }
     );
 
@@ -400,7 +400,7 @@ export default function App() {
       clearTimeout(undoTimeoutRef.current);
       undoTimeoutRef.current = null;
     }
-    const restored = [...diagrams];
+    const restored = [...latestDiagramsRef.current];
     restored.splice(Math.min(undoState.index, restored.length), 0, undoState.diagram);
     setModes((prev) => ({ ...prev, [undoState.diagram.id]: 'display' }));
     setUndoState(null);
@@ -420,10 +420,20 @@ export default function App() {
   }
 
   function moveDiagram(id, direction) {
-    const target = moveTargetIndex(diagrams, id, direction);
+    // Reads latestDiagramsRef.current, not the `diagrams` state closure:
+    // spamming this button fires several clicks before React re-renders
+    // (each click's handler is still bound to whatever `diagrams` closure
+    // was current at the last completed render), so a stale `diagrams` read
+    // would compute `next` from an outdated array and silently revert the
+    // previous click's move when persist() overwrites latestDiagramsRef.current
+    // with it. latestDiagramsRef.current is always the true last-applied
+    // state (persist() updates it synchronously on every call), so basing
+    // the swap on it keeps rapid successive moves additive instead of lossy.
+    const current = latestDiagramsRef.current;
+    const target = moveTargetIndex(current, id, direction);
     if (target === null) return;
-    const index = diagrams.findIndex((d) => d.id === id);
-    const next = [...diagrams];
+    const index = current.findIndex((d) => d.id === id);
+    const next = [...current];
     [next[index], next[target]] = [next[target], next[index]];
     persist(next, { immediate: true });
   }
