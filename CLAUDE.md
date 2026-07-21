@@ -444,6 +444,29 @@ for the source textarea — not like a discrete dropdown pick. The "Reset
 node" button is a genuine discrete action and correctly keeps
 `{ immediate: true }`.
 
+**Second, more severe gotcha with the same root cause, found later: that
+fix only debounced the network save, not the re-render.** Every `onChange`
+tick during a color drag still called `updateDiagram` immediately, which
+changes `diagram.source` — and `DiagramView`'s render effect is keyed on
+`source`, so every tick was triggering a full `mermaid.render()` (layout +
+DOMPurify sanitize + our own `inlineSvgStyles` DOM parse/serialize), with
+nothing capping how fast those could fire. Confirmed via a real user
+report: dragging the color picker on one diagram locked up the entire
+machine, not just the browser tab — a native color input can fire
+`onChange` fast enough, with expensive-enough work behind each tick, to
+starve the system before any single render finishes. Fixed by
+`scheduleNodeColorUpdate`/`flushNodeColorUpdate` in `App.jsx`: the same
+"only the last value in a burst wins" debounce pattern as the save-race fix
+above, but applied to the `updateDiagram` call itself
+(`NODE_COLOR_RENDER_DEBOUNCE_MS`, 120ms), not just to `flushSave`. `onBlur`
+now flushes this pending update before calling `flushSave` (via
+`flushNodeColorAndSave`), so a blur landing inside the debounce window
+still saves the color from the final drag position, not a stale
+in-between one. If another continuous-input control is ever added here
+(anything whose native widget fires updates faster than a full diagram
+re-render can keep up with), it needs the same two-level debounce — one
+for the network save, one for the local re-render — not just the first.
+
 **Gotcha already hit once:** the Section `<input>` cannot be wired straight
 to `diagram.section` via `onChange` — each render-group wrapper is keyed by
 the section name (`` key={`section-${group.name}`} ``), so every keystroke
