@@ -26,5 +26,10 @@ app:
 
 permissions:
   scopes:
-    - read:jira-work
-    - write:jira-work
+    # Narrower than read:jira-work/write:jira-work: the resolver only ever
+    # GETs/PUTs the mermaid-diagram-board issue entity property — it never
+    # searches issues, creates/deletes issues, or touches comments/worklogs,
+    # all of which the classic scopes also grant. Verified against
+    # https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps/
+    - read:issue.property:jira
+    - write:issue.property:jira
