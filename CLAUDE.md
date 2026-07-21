@@ -257,6 +257,53 @@ of applying the requested color. This class-rule pass is shared by both
 flowchart and state-diagram rendering, so a future change here needs
 re-verifying against both, not just whichever one prompted the change.
 
+**Mermaid was bumped from `^10.9.1` to `^11.16.0`** (`static/main-custom-ui/package.json`)
+specifically to pick up diagram types that didn't exist in 10.x (kanban,
+landed in Mermaid v11.4; treemap-beta, landed later in the 11.x line —
+there is no diagram-type whitelist in this app, so any type the installed
+Mermaid can parse just works from the source textarea; the earlier "we
+don't support those" was really "the pinned version predates them", not a
+deliberate restriction). Verified via the same jsdom scratch-render
+technique as the `!important` bug above (real `mermaid` package, not
+guessed) before touching real code, which caught two things a plain
+"does it parse" check would have missed:
+- Kanban and treemap-beta render as plain SVG `<text>` under this app's
+  existing `htmlLabels: false` config — no `<foreignObject>` in the
+  output, so the CSP/HTML-labels problem this whole section exists to
+  work around does **not** recur for either new type. (This isn't
+  guaranteed for every future new diagram type Mermaid adds — a type
+  could ignore `htmlLabels` and always emit `<foreignObject>` — so re-check
+  this jsdom-first when adding another one, don't assume it from these two.)
+- Mermaid 11's per-node `style NodeId fill:...` output (the flowchart path,
+  (2) above) started appending a literal `!important` to every declaration
+  where Mermaid 10 didn't — e.g. `style="fill:#f00 !important;stroke:#333
+  !important"`. `parseInlineStyleAttr` (the per-element `[style]` handler)
+  didn't strip it, unlike the class-rule pass which already had exactly
+  this defensive stripping for a different reason (see above) — the result
+  was `fill="#f00 !important"` on the element, invalid SVG attribute
+  syntax, so the custom color silently failed to apply. `parseInlineStyleAttr`
+  now strips a trailing `!important` per declaration too, the same
+  `.replace(/\s*!important\s*$/i, '')` the class-rule pass already used.
+  This broke the flowchart *and* state-diagram per-node color pickers
+  (state's classDef path also emits a redundant literal `style=` attribute
+  in addition to its CSS class, which goes through this same per-element
+  path) — re-check both if `parseInlineStyleAttr` changes again.
+- Treemap-beta emits `style="display: none;"` on some label/header
+  elements (unused overflow/duplicate-label variants it renders but doesn't
+  show). `display` wasn't in `STYLE_PROPS_TO_ATTRS`, so it was silently
+  dropped like any other unlisted property — except unlike a lost color or
+  font tweak, a dropped `display:none` makes the element default to
+  *visible*, producing duplicated/overlapping labels instead of a merely
+  degraded look. Added `display`, `visibility`, and `dominant-baseline`
+  (also present in treemap's inline styles, for text vertical alignment) to
+  the whitelist. `max-width`, `text-align`, `white-space`, `overflow`, and
+  `text-overflow` also showed up in treemap/kanban output and are still
+  unhandled — these have no direct SVG presentation-attribute equivalent,
+  so (unlike `display`) dropping them is a real but purely cosmetic gap
+  (no text wrapping/truncation), not a correctness bug; same "no SVG
+  equivalent exists" category as `max-width`/`text-align` here, not
+  something to force through the whitelist.
+
 **Flowchart and state-diagram per-node coloring are two genuinely
 different Mermaid mechanisms — don't assume one implies the other.**
 Verified directly against the real `mermaid` package's parser (not
@@ -504,3 +551,15 @@ Remaining rough edges: no per-node color picker for sequence/ER/pie/gantt
 diagrams (Mermaid itself has no mechanism for it — verified, not just
 unbuilt), the split `src/` layout described above, and no automated
 UI/rendering or resolver-integration tests.
+
+**Mermaid bumped to `^11.16.0`** (see the CSP section above) — kanban and
+treemap-beta diagrams are now supported (the app never had a diagram-type
+whitelist; they just failed to parse under the previously-pinned `10.9.x`).
+No per-node color picker for either, same reasoning as sequence/ER/pie/gantt
+above (not yet checked against the real parser for these two specifically —
+do that before assuming it's just a missing module). Deployed to the
+connected test site, jsdom-verified, and real-browser-verified (console
+open) by the user as of 2026-07-21: kanban and treemap-beta render
+correctly (no CSP violations, no duplicated treemap labels), and the
+flowchart/state per-node color-picker regression check passed (the
+`!important`-stripping fix holds under real Jira CSP, not just jsdom).

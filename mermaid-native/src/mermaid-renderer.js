@@ -102,6 +102,14 @@ const STYLE_PROPS_TO_ATTRS = {
   'font-size': 'font-size',
   'font-weight': 'font-weight',
   'text-anchor': 'text-anchor',
+  // display/visibility/dominant-baseline: needed once treemap-beta support
+  // landed (Mermaid 11). Treemap emits some label/header elements with
+  // `style="display: none;"` to hide overflow/duplicate variants it doesn't
+  // end up using — without converting this, the style attribute is just
+  // dropped and those elements render visible, duplicating labels.
+  display: 'display',
+  visibility: 'visibility',
+  'dominant-baseline': 'dominant-baseline',
 };
 
 export function parseInlineStyleAttr(styleAttr) {
@@ -110,7 +118,14 @@ export function parseInlineStyleAttr(styleAttr) {
     const i = decl.indexOf(':');
     if (i === -1) return;
     const prop = decl.slice(0, i).trim();
-    const value = decl.slice(i + 1).trim();
+    // Strip a trailing !important the same way the <style>-block class-rule
+    // pass already does (see below) — Mermaid 11's per-node `style
+    // NodeId fill:...` output started appending `!important` to every
+    // declaration (Mermaid 10 didn't), and left in, it becomes part of the
+    // SVG attribute value ("fill=\"#f00 !important\""), which is invalid
+    // syntax there and silently fails to apply instead of showing the
+    // requested color.
+    const value = decl.slice(i + 1).trim().replace(/\s*!important\s*$/i, '');
     if (prop && value) declarations[prop] = value;
   });
   return declarations;
