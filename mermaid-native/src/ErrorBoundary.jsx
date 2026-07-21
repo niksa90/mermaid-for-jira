@@ -1,5 +1,5 @@
 import React from 'react';
-import SectionMessage from '@atlaskit/section-message';
+import SectionMessage from './SectionMessage';
 
 export default class DiagramErrorBoundary extends React.Component {
   constructor(props) {

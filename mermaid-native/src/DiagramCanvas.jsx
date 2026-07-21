@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import VidFullScreenOnIcon from '@atlaskit/icon/glyph/vid-full-screen-on';
-import VidFullScreenOffIcon from '@atlaskit/icon/glyph/vid-full-screen-off';
+import { VidFullScreenOnIcon, VidFullScreenOffIcon } from './icons';
 import { isDarkMermaidTheme } from './mermaid-renderer';
 
 const ZOOM_STEP = 1.25;

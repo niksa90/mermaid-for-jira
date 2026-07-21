@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { invoke, view } from '@forge/bridge';
-import Spinner from '@atlaskit/spinner';
-import SectionMessage from '@atlaskit/section-message';
-import TrashIcon from '@atlaskit/icon/glyph/trash';
-import EditIcon from '@atlaskit/icon/glyph/edit';
-import CheckIcon from '@atlaskit/icon/glyph/check';
-import ArrowUpIcon from '@atlaskit/icon/glyph/arrow-up';
-import ArrowDownIcon from '@atlaskit/icon/glyph/arrow-down';
-import ChevronDownIcon from '@atlaskit/icon/glyph/chevron-down';
-import ChevronRightIcon from '@atlaskit/icon/glyph/chevron-right';
+import Spinner from '../../../src/Spinner';
+import SectionMessage from '../../../src/SectionMessage';
+import {
+  TrashIcon,
+  EditIcon,
+  CheckIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+} from '../../../src/icons';
 import DiagramView from '../../../src/DiagramView';
 import DiagramErrorBoundary from '../../../src/ErrorBoundary';
 import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
@@ -135,6 +137,18 @@ export default function App() {
   // concurrency (see resolvers/index.js). Updated on load and after every
   // successful save; never derived from our own locally-edited diagrams.
   const baseSnapshotRef = useRef(null);
+  // Serializes flushSave calls. Without this, e.g. a textarea's onBlur
+  // firing flushSave while the debounced autosave from the same edit is
+  // still in flight sends two setFieldValue calls with the same
+  // baseSnapshot; the first's write moves the server's real value out from
+  // under the second, which the resolver (correctly, given only what it can
+  // see) then reports as a conflict — surfacing as "someone else changed
+  // these diagrams" even though it was this app's own overlapping saves. A
+  // second call arriving while one is in flight is coalesced into a single
+  // rerun after the first settles, so it picks up the just-updated
+  // baseSnapshot instead of racing against it.
+  const saveInFlightRef = useRef(null);
+  const pendingRerunRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,25 +201,56 @@ export default function App() {
 
   async function flushSave({ force = false } = {}) {
     if (!issueKeyRef.current) return;
+    // A direct call (blur, an immediate persist, unmount cleanup) always
+    // supersedes a still-pending debounced one — otherwise the debounce
+    // timer fires again later on its own and races this call (see
+    // saveInFlightRef above).
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (saveInFlightRef.current) {
+      // Coalesce: don't start a second request while one's in flight, just
+      // remember to rerun once it settles, using whatever's newest at that
+      // point (latestDiagramsRef / baseSnapshotRef).
+      pendingRerunRef.current = { force: pendingRerunRef.current?.force || force };
+      return;
+    }
+
     setSaveState('saving');
-    try {
-      const result = await invoke('setFieldValue', {
-        issueKey: issueKeyRef.current,
-        value: { diagrams: latestDiagramsRef.current },
-        baseSnapshot: baseSnapshotRef.current,
-        force,
-      });
-      if (result.conflict) {
-        setConflict(result.current);
-        setSaveState('idle');
-        return;
+    const run = (async () => {
+      try {
+        const result = await invoke('setFieldValue', {
+          issueKey: issueKeyRef.current,
+          value: { diagrams: latestDiagramsRef.current },
+          baseSnapshot: baseSnapshotRef.current,
+          force,
+        });
+        if (result.conflict) {
+          setConflict(result.current);
+          setSaveState('idle');
+          // A real conflict needs the user to resolve it before another
+          // save makes sense — a queued rerun would just hit the same
+          // conflict again against the same stale baseSnapshot.
+          pendingRerunRef.current = null;
+          return;
+        }
+        baseSnapshotRef.current = result.snapshot;
+        setErrorMessage(null);
+        setSaveState('saved');
+      } catch (err) {
+        setErrorMessage(err.message || String(err));
+        setSaveState('error');
       }
-      baseSnapshotRef.current = result.snapshot;
-      setErrorMessage(null);
-      setSaveState('saved');
-    } catch (err) {
-      setErrorMessage(err.message || String(err));
-      setSaveState('error');
+    })();
+    saveInFlightRef.current = run;
+    await run;
+    saveInFlightRef.current = null;
+
+    if (pendingRerunRef.current) {
+      const rerun = pendingRerunRef.current;
+      pendingRerunRef.current = null;
+      flushSave(rerun);
     }
   }
 
