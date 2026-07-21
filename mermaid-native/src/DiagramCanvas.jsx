@@ -11,8 +11,9 @@ function clamp(value, min, max) {
 }
 
 /**
- * Wraps a rendered Mermaid SVG string with wheel-zoom, drag-to-pan, and
- * +/-/reset controls.
+ * Wraps a rendered Mermaid SVG string with ctrl/cmd-wheel-zoom,
+ * drag-to-pan, and +/-/reset controls. A plain wheel (no modifier) is left
+ * alone so the page can scroll past the diagram instead of zooming it.
  *
  * Pan/zoom is implemented by rewriting the SVG's own `viewBox` attribute,
  * not a CSS `transform`/inline `style` — Forge Custom UI's CSP blocks
@@ -96,11 +97,17 @@ export default function DiagramCanvas({ svg, theme = 'default' }) {
   // Attached manually (not React's onWheel): React treats wheel listeners
   // as passive by default, which silently no-ops preventDefault() and lets
   // the page scroll instead of zooming.
+  //
+  // Only ctrlKey/metaKey wheel events zoom (the same modifier browsers use
+  // for trackpad pinch-zoom). A plain wheel event falls through untouched
+  // so the page can scroll past a diagram — with several diagrams stacked
+  // in the panel, unconditionally capturing every wheel event here used to
+  // make it impossible to scroll from one diagram to the next.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return undefined;
     function onWheel(e) {
-      if (!viewRef.current) return;
+      if (!viewRef.current || !(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       zoomAt(e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP, e.clientX, e.clientY);
     }
@@ -209,7 +216,7 @@ export default function DiagramCanvas({ svg, theme = 'default' }) {
         <button
           type="button"
           className="btn btn-subtle btn-icon"
-          title="Zoom out"
+          title="Zoom out (or Ctrl+scroll)"
           onClick={() => zoomAt(1 / ZOOM_STEP)}
         >
           −
@@ -220,7 +227,7 @@ export default function DiagramCanvas({ svg, theme = 'default' }) {
         <button
           type="button"
           className="btn btn-subtle btn-icon"
-          title="Zoom in"
+          title="Zoom in (or Ctrl+scroll)"
           onClick={() => zoomAt(ZOOM_STEP)}
         >
           +
