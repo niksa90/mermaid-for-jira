@@ -1,6 +1,6 @@
 # Mermaid Diagrams for Jira
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/niksa90/mermaid-for-jira/actions/workflows/ci.yml/badge.svg)](https://github.com/niksa90/mermaid-for-jira/actions/workflows/ci.yml)
 [![Cost to run: $0/month](https://img.shields.io/badge/cost%20to%20run-%240%2Fmonth-brightgreen)](#how-it-works)
 [![Jira Forge](https://img.shields.io/badge/platform-Atlassian%20Forge-0052CC)](https://developer.atlassian.com/platform/forge/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
