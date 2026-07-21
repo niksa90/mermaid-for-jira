@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import SectionMessage from '@atlaskit/section-message';
-import Spinner from '@atlaskit/spinner';
+import SectionMessage from './SectionMessage';
+import Spinner from './Spinner';
 import { renderMermaid, safeDiagramId, withTheme } from './mermaid-renderer';
 import DiagramCanvas from './DiagramCanvas';
 

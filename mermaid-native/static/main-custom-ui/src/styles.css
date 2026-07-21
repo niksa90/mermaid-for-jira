@@ -23,6 +23,12 @@
   --color-danger-bg-solid-hover: #7a2116;
   --color-danger-text: #ae2e24;
 
+  --color-warning-bg: #fff7d6;
+  --color-warning-border: #e2b203;
+
+  --color-info-bg: #e9f2ff;
+  --color-info-border: #388bff;
+
   --color-border: #dfe1e6;
   --color-border-focus: #388bff;
 
@@ -64,6 +70,12 @@
   --color-danger-bg-hover: #42221f;
   --color-danger-bg-solid-hover: #fd9891;
   --color-danger-text: #fd9891;
+
+  --color-warning-bg: #332e18;
+  --color-warning-border: #f5cd47;
+
+  --color-info-bg: #1c2b41;
+  --color-info-border: #85b8ff;
 
   --color-border: #333b43;
   --color-border-focus: #85b8ff;
@@ -474,6 +486,13 @@ body {
   padding: 0;
 }
 
+/* Plain-SVG stand-in for @atlaskit/icon glyphs — see icons.jsx */
+.icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 .btn-remove:hover {
   background: var(--color-danger-bg-hover);
   color: var(--color-danger-text);
@@ -549,6 +568,81 @@ body {
 
 .size-warning {
   color: var(--color-danger-text);
+}
+
+/* --- Spinner (stand-in for @atlaskit/spinner — see Spinner.jsx) --- */
+
+.spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  vertical-align: middle;
+  animation: spinner-rotate 0.8s linear infinite;
+}
+
+.spinner-small {
+  width: 14px;
+  height: 14px;
+}
+
+.spinner-medium {
+  width: 20px;
+  height: 20px;
+}
+
+.spinner-large {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Section message (stand-in for @atlaskit/section-message — see
+   SectionMessage.jsx) --- */
+
+.section-message {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-subtle-bg);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.section-message p {
+  margin: 0;
+}
+
+.section-message-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.section-message-error {
+  background: var(--color-danger-bg-hover);
+  border-left-color: var(--color-danger-bg);
+}
+
+.section-message-error .section-message-title {
+  color: var(--color-danger-text);
+}
+
+.section-message-warning {
+  background: var(--color-warning-bg);
+  border-left-color: var(--color-warning-border);
+}
+
+.section-message-information {
+  background: var(--color-info-bg);
+  border-left-color: var(--color-info-border);
 }
 
 /* --- Conflict banner --- */

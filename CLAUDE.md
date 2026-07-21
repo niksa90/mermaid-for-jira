@@ -68,6 +68,27 @@ anything that risks it before writing code, don't just implement it:
     changes" conflict-resolution path). Don't strip `baseSnapshot` handling
     out to "simplify" a future save-path change — that's exactly what
     reintroduces silent last-write-wins.
+    **This mechanism can't distinguish a real other-user edit from the
+    client sending two overlapping `setFieldValue` calls for its own
+    edit** — if a second call starts before the first one's response has
+    updated the client's `baseSnapshotRef`, both go out with the same
+    `baseSnapshot`; the first save moves the server's real value, and the
+    second then legitimately fails the resolver's comparison, surfacing as
+    "someone else changed these diagrams" against the user's own edit, with
+    nobody else involved. `App.jsx`'s `flushSave` used to have no guard
+    against this — e.g. a textarea's `onBlur` firing `flushSave` immediately
+    while the 600ms debounce timer from the same edit was still armed would
+    fire a second, overlapping `flushSave` shortly after. Fixed two ways:
+    `flushSave` now clears any pending debounce timer as its first step
+    (so a direct call always supersedes a still-pending debounced one
+    rather than both eventually firing), and concurrent `flushSave` calls
+    are serialized via `saveInFlightRef`/`pendingRerunRef` — a call that
+    arrives while one is already in flight doesn't start a second request,
+    it just marks that a rerun is needed once the in-flight one settles, so
+    the rerun picks up the just-updated `baseSnapshot` instead of racing
+    against it. A rerun is skipped if the in-flight call actually did hit a
+    real conflict — retrying immediately would just hit the same conflict
+    again against the same stale `baseSnapshot`.
   - **Size-limit enforcement**: rejects (throws) if the serialized value
     would exceed Jira's documented 32,768-byte entity-property limit
     (https://developer.atlassian.com/cloud/jira/platform/jira-entity-properties/).
@@ -138,40 +159,34 @@ elements styled via `styles.css`** (`.btn`, `.text-input`, `.select-input`
 classes), which sidesteps the question by not depending on any runtime CSS
 injection at all.
 
-Not every Atlaskit package has this problem — `@atlaskit/section-message`,
-`@atlaskit/spinner`, and `@atlaskit/icon` all render correctly and are still
-used. The difference: those ship real `*.compiled.css` files (Atlaskit's
-newer "Compiled" CSS-in-JS, extracted to static CSS at Atlaskit's own publish
-time) that flow through webpack's normal `.css` module rule like any other
-imported stylesheet — no runtime injection involved. You can tell which
-category a component falls into by checking whether a `webpack --mode
-production` build output lists a `*.compiled.css` module for it (see Dev
-loop → Build). If a new Atlaskit component is needed, check this before
-assuming it'll look right: it might, if it's been migrated to Compiled; if it
-still resolves to `@emotion/react`, expect it to render unstyled and plan to
-either hand-style around it or replace it, the same way this app already did
-for Button/TextField.
+**Update: `@atlaskit/section-message`, `@atlaskit/spinner`, and
+`@atlaskit/icon` are no longer used — this section's earlier claim that they
+"render correctly" turned out to be stale, not permanently true.** They were
+previously believed safe because they ship real `*.compiled.css` files
+(Atlaskit's "Compiled" CSS-in-JS, extracted to static CSS at Atlaskit's own
+publish time, flowing through webpack's normal `.css` module rule with no
+runtime injection). That's still true for their own box/layout styling. But
+direct inspection of the versions actually resolved by this app's
+`package.json` ranges (`@atlaskit/icon@22.28.0` at the time this was found)
+showed real CSP violations in the browser console (`Applying inline style
+violates the following Content Security Policy directive 'style-src'...`),
+traced to two things neither compiled-CSS check alone would catch:
+1. `@atlaskit/icon`'s actual rendering component (`@atlaskit/icon/dist/cjs/components/icon.js`) sets a literal React `style={{ '--icon-primary-color': ..., '--icon-secondary-color': ..., margin: ... }}` prop *and* an Emotion `css` prop — both inline styles, unconditionally, on every icon render. (There's a newer "Compiled"-based icon path gated behind an internal Atlaskit feature flag, `platform-visual-refresh-icons-legacy-facade`, but this app never opted into it, so every glyph import took the legacy Emotion path.)
+2. `@atlaskit/section-message` internally renders its appearance icon *through that same legacy `@atlaskit/icon` component* — there's no prop to opt out of it, so section-message inherits the violation regardless of section-message's own CSS being Compiled.
+3. `@atlaskit/spinner`'s own component (`spinner.js`) sets `style={{ animationDelay, width, height }}` / `style={{ stroke }}` directly for values that have to vary per instance/render — Compiled CSS classes handle its static layout, but these per-instance values are still a literal `style` prop.
 
-**These Compiled components don't participate in this app's dark mode,
-and that's deliberate, not an oversight.** Their `*.compiled.css` references
-real Atlaskit design-token CSS custom properties (`var(--ds-text,#172b4d)`,
-`var(--ds-border-radius,4px)`, etc. — dozens of them across
-Spinner/SectionMessage's actual usage, hundreds if you count every value
-their shared `@atlaskit/primitives` Box utility could theoretically emit).
-Confirmed by direct inspection: **no static CSS file defining these
-`--ds-*` variables ships anywhere in `@atlaskit/tokens`** — theming is
-entirely a runtime mechanism (`setGlobalTheme`/`getThemeStyles`, which
-constructs and injects a stylesheet at runtime), the same category of
-CSP risk already established for Button/TextField above, not something to
-assume is safe just because it's "just CSS variables." Hand-authoring a
-matching light/dark `--ds-*` stylesheet ourselves was considered and
-rejected: it would pin this app to Atlaskit's *undocumented* internal
-variable names (not a supported API) for two small, transient UI elements
-(a loading spinner, warning/error banners) — a standing fragility risk
-(silent breakage on an Atlaskit version bump) judged disproportionate to
-the payoff. If this is ever revisited, redo the "which `--ds-*` names does
-the actual rendered output use" check fresh against the then-current
-Atlaskit version rather than trusting this list to still be accurate.
+None of this was visible from "does a production build list a `*.compiled.css` module for it" — that check is necessary but not sufficient; a component can ship Compiled CSS for most of its styling and still leak inline styles for the handful of properties that are dynamic per-render. The takeaway for any future Atlaskit component: also render it and check the browser console for CSP violations, not just the build output.
+
+All three were replaced with hand-rolled equivalents, the same pattern already used for Button/TextField: `mermaid-native/src/icons.jsx` (plain `<svg>` per glyph, using the exact path data Atlaskit's own glyph modules embed, sized via width/height attributes, colored via `fill="currentColor"`, no `style` prop, no CSS-in-JS), `mermaid-native/src/Spinner.jsx` (a CSS `@keyframes` rotation via `.spinner-{size}` classes in `styles.css`, so per-instance sizing is a class name, not a `style` prop), `mermaid-native/src/SectionMessage.jsx` (a plain `<div>` with `.section-message-{appearance}` classes, no internal icon). These live in the *outer* `src/` tree (not `static/main-custom-ui/src/`) because both the inner Custom UI app (`App.jsx`) and the outer shared components (`DiagramCanvas.jsx`'s fullscreen-toggle icons, `DiagramView.jsx`'s error/loading states, `ErrorBoundary.jsx`) needed them — see the split-`src/` note under Architecture. `@atlaskit/css-reset` is unaffected and still used: it resolves to a plain `.css` file (`"main": "dist/bundle.css"` in its own `package.json`), not a JS module, so it never had a runtime-injection path to begin with.
+
+**These hand-rolled replacements don't participate in this app's dark mode
+in exactly the same way the Atlaskit originals didn't** — `.spinner`'s
+border color and `.section-message-*`'s background/border-left colors are
+plain hex-ish CSS custom properties (`--color-warning-bg`,
+`--color-info-bg`, etc.) added to the existing light/dark `:root` blocks in
+`styles.css`, so — unlike the Atlaskit originals — they *do* follow this
+app's dark mode now; this is a strict improvement over the previous
+"known, accepted gap," not something that needs separate tracking.
 
 ## The CSP / styling constraint (central to "let users style diagrams")
 
@@ -382,11 +397,12 @@ parallel `@media (prefers-color-scheme: dark)` block to keep in sync by
 hand; resolving 'auto' in JS made that redundant, and the earlier version
 of this that had both was a maintenance-drift risk in review). This is
 read once at load, not observed live — a Jira theme change while the panel
-is already open needs a reload to pick up. **Known, accepted gap:**
-`@atlaskit/spinner`'s and `@atlaskit/section-message`'s own colors don't
-follow this (see "Atlaskit components and CSP" above for why that's a
-deliberate tradeoff, not an oversight) — everything else (hand-rolled
-buttons/inputs, card chrome, diagram surfaces) does.
+is already open needs a reload to pick up. Every visible element follows
+this, including the spinner and section-message banners — both are now
+hand-rolled (see "Atlaskit components and CSP" above) and pick up
+`styles.css`'s dark palette like everything else; this used to be a known,
+accepted gap when they were the real Atlaskit components, but isn't
+anymore.
 
 **A diagram's own surface (background) follows *its own* Mermaid theme,
 not Jira's chrome dark mode — these are independent settings, and
@@ -428,6 +444,29 @@ for the source textarea — not like a discrete dropdown pick. The "Reset
 node" button is a genuine discrete action and correctly keeps
 `{ immediate: true }`.
 
+**Second, more severe gotcha with the same root cause, found later: that
+fix only debounced the network save, not the re-render.** Every `onChange`
+tick during a color drag still called `updateDiagram` immediately, which
+changes `diagram.source` — and `DiagramView`'s render effect is keyed on
+`source`, so every tick was triggering a full `mermaid.render()` (layout +
+DOMPurify sanitize + our own `inlineSvgStyles` DOM parse/serialize), with
+nothing capping how fast those could fire. Confirmed via a real user
+report: dragging the color picker on one diagram locked up the entire
+machine, not just the browser tab — a native color input can fire
+`onChange` fast enough, with expensive-enough work behind each tick, to
+starve the system before any single render finishes. Fixed by
+`scheduleNodeColorUpdate`/`flushNodeColorUpdate` in `App.jsx`: the same
+"only the last value in a burst wins" debounce pattern as the save-race fix
+above, but applied to the `updateDiagram` call itself
+(`NODE_COLOR_RENDER_DEBOUNCE_MS`, 120ms), not just to `flushSave`. `onBlur`
+now flushes this pending update before calling `flushSave` (via
+`flushNodeColorAndSave`), so a blur landing inside the debounce window
+still saves the color from the final drag position, not a stale
+in-between one. If another continuous-input control is ever added here
+(anything whose native widget fires updates faster than a full diagram
+re-render can keep up with), it needs the same two-level debounce — one
+for the network save, one for the local re-render — not just the first.
+
 **Gotcha already hit once:** the Section `<input>` cannot be wired straight
 to `diagram.section` via `onChange` — each render-group wrapper is keyed by
 the section name (`` key={`section-${group.name}`} ``), so every keystroke
@@ -461,9 +500,7 @@ permanent test, matching this project's existing convention of verifying
 rendering-dependent code in a real browser rather than automating it
 around a DOM shim.
 
-Remaining rough edges: `@atlaskit/spinner`/`@atlaskit/section-message`
-don't follow dark mode (deliberate, see "Atlaskit components and CSP"), no
-per-node color picker for sequence/ER/pie/gantt diagrams (Mermaid itself
-has no mechanism for it — verified, not just unbuilt), the split `src/`
-layout described above, and no automated UI/rendering or
-resolver-integration tests.
+Remaining rough edges: no per-node color picker for sequence/ER/pie/gantt
+diagrams (Mermaid itself has no mechanism for it — verified, not just
+unbuilt), the split `src/` layout described above, and no automated
+UI/rendering or resolver-integration tests.

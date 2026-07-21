@@ -8,9 +8,6 @@
   },
   "dependencies": {
     "@atlaskit/css-reset": "^8.1.1",
-    "@atlaskit/icon": "^22.0.0",
-    "@atlaskit/section-message": "^7.0.0",
-    "@atlaskit/spinner": "^17.0.0",
     "@forge/bridge": "^4.0.0",
     "mermaid": "^10.9.1",
     "react": "^18.2.0",

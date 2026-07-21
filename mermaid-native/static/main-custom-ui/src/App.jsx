@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { invoke, view } from '@forge/bridge';
-import Spinner from '@atlaskit/spinner';
-import SectionMessage from '@atlaskit/section-message';
-import TrashIcon from '@atlaskit/icon/glyph/trash';
-import EditIcon from '@atlaskit/icon/glyph/edit';
-import CheckIcon from '@atlaskit/icon/glyph/check';
-import ArrowUpIcon from '@atlaskit/icon/glyph/arrow-up';
-import ArrowDownIcon from '@atlaskit/icon/glyph/arrow-down';
-import ChevronDownIcon from '@atlaskit/icon/glyph/chevron-down';
-import ChevronRightIcon from '@atlaskit/icon/glyph/chevron-right';
+import Spinner from '../../../src/Spinner';
+import SectionMessage from '../../../src/SectionMessage';
+import {
+  TrashIcon,
+  EditIcon,
+  CheckIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+} from '../../../src/icons';
 import DiagramView from '../../../src/DiagramView';
 import DiagramErrorBoundary from '../../../src/ErrorBoundary';
 import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
@@ -29,6 +31,20 @@ import {
 import './styles.css';
 
 const SAVE_DEBOUNCE_MS = 600;
+// A native <input type="color"> fires onChange continuously while its
+// picker is being dragged — tens of times a second, not once on release.
+// Every one of those was landing directly on `updateDiagram`, which changes
+// `diagram.source`, which DiagramView's render effect (keyed on `source`)
+// treats as a brand new diagram to render — so a color drag was triggering
+// a full mermaid.render() (layout + DOMPurify sanitize + our own
+// inlineSvgStyles DOM parse/serialize) on every single drag tick, with
+// nothing throttling how fast those could queue up. On even a modest
+// diagram this was enough to pin a CPU core solid and, per a real user
+// report, lock up the whole machine — not just the tab. This constant
+// throttles how often a color drag actually commits to `diagram.source`
+// (and hence triggers a re-render), independent of SAVE_DEBOUNCE_MS above
+// which only throttles the network call. See scheduleNodeColorUpdate.
+const NODE_COLOR_RENDER_DEBOUNCE_MS = 120;
 const UNDO_TIMEOUT_MS = 8000;
 // Jira Cloud's documented entity-property value size limit (also enforced
 // resolver-side — this is just so the UI can warn before attempting a save
@@ -135,6 +151,51 @@ export default function App() {
   // concurrency (see resolvers/index.js). Updated on load and after every
   // successful save; never derived from our own locally-edited diagrams.
   const baseSnapshotRef = useRef(null);
+  // Serializes flushSave calls. Without this, e.g. a textarea's onBlur
+  // firing flushSave while the debounced autosave from the same edit is
+  // still in flight sends two setFieldValue calls with the same
+  // baseSnapshot; the first's write moves the server's real value out from
+  // under the second, which the resolver (correctly, given only what it can
+  // see) then reports as a conflict — surfacing as "someone else changed
+  // these diagrams" even though it was this app's own overlapping saves. A
+  // second call arriving while one is in flight is coalesced into a single
+  // rerun after the first settles, so it picks up the just-updated
+  // baseSnapshot instead of racing against it.
+  const saveInFlightRef = useRef(null);
+  const pendingRerunRef = useRef(null);
+  // See NODE_COLOR_RENDER_DEBOUNCE_MS above.
+  const nodeColorTimeoutRef = useRef(null);
+  const pendingNodeColorApplyRef = useRef(null);
+
+  // Throttles how often a color drag actually commits to `diagram.source`
+  // (each call supersedes the previous one, like the save debounce above —
+  // only the last color value in a burst of drag ticks ends up applied).
+  function scheduleNodeColorUpdate(applyFn) {
+    if (nodeColorTimeoutRef.current) clearTimeout(nodeColorTimeoutRef.current);
+    pendingNodeColorApplyRef.current = applyFn;
+    nodeColorTimeoutRef.current = setTimeout(() => {
+      nodeColorTimeoutRef.current = null;
+      const fn = pendingNodeColorApplyRef.current;
+      pendingNodeColorApplyRef.current = null;
+      fn();
+    }, NODE_COLOR_RENDER_DEBOUNCE_MS);
+  }
+
+  // Called on blur so the final dragged-to color is applied (and reflected
+  // in latestDiagramsRef) before flushSave reads it — otherwise a blur that
+  // lands inside the debounce window would save the color from before the
+  // final drag position.
+  function flushNodeColorUpdate() {
+    if (nodeColorTimeoutRef.current) {
+      clearTimeout(nodeColorTimeoutRef.current);
+      nodeColorTimeoutRef.current = null;
+    }
+    if (pendingNodeColorApplyRef.current) {
+      const fn = pendingNodeColorApplyRef.current;
+      pendingNodeColorApplyRef.current = null;
+      fn();
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -174,6 +235,7 @@ export default function App() {
   // Flush any pending debounced save if the panel closes mid-edit.
   useEffect(
     () => () => {
+      flushNodeColorUpdate();
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         flushSave();
@@ -187,25 +249,56 @@ export default function App() {
 
   async function flushSave({ force = false } = {}) {
     if (!issueKeyRef.current) return;
+    // A direct call (blur, an immediate persist, unmount cleanup) always
+    // supersedes a still-pending debounced one — otherwise the debounce
+    // timer fires again later on its own and races this call (see
+    // saveInFlightRef above).
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (saveInFlightRef.current) {
+      // Coalesce: don't start a second request while one's in flight, just
+      // remember to rerun once it settles, using whatever's newest at that
+      // point (latestDiagramsRef / baseSnapshotRef).
+      pendingRerunRef.current = { force: pendingRerunRef.current?.force || force };
+      return;
+    }
+
     setSaveState('saving');
-    try {
-      const result = await invoke('setFieldValue', {
-        issueKey: issueKeyRef.current,
-        value: { diagrams: latestDiagramsRef.current },
-        baseSnapshot: baseSnapshotRef.current,
-        force,
-      });
-      if (result.conflict) {
-        setConflict(result.current);
-        setSaveState('idle');
-        return;
+    const run = (async () => {
+      try {
+        const result = await invoke('setFieldValue', {
+          issueKey: issueKeyRef.current,
+          value: { diagrams: latestDiagramsRef.current },
+          baseSnapshot: baseSnapshotRef.current,
+          force,
+        });
+        if (result.conflict) {
+          setConflict(result.current);
+          setSaveState('idle');
+          // A real conflict needs the user to resolve it before another
+          // save makes sense — a queued rerun would just hit the same
+          // conflict again against the same stale baseSnapshot.
+          pendingRerunRef.current = null;
+          return;
+        }
+        baseSnapshotRef.current = result.snapshot;
+        setErrorMessage(null);
+        setSaveState('saved');
+      } catch (err) {
+        setErrorMessage(err.message || String(err));
+        setSaveState('error');
       }
-      baseSnapshotRef.current = result.snapshot;
-      setErrorMessage(null);
-      setSaveState('saved');
-    } catch (err) {
-      setErrorMessage(err.message || String(err));
-      setSaveState('error');
+    })();
+    saveInFlightRef.current = run;
+    await run;
+    saveInFlightRef.current = null;
+
+    if (pendingRerunRef.current) {
+      const rerun = pendingRerunRef.current;
+      pendingRerunRef.current = null;
+      flushSave(rerun);
     }
   }
 
@@ -404,10 +497,27 @@ export default function App() {
     // baseSnapshotRef before any of the earlier in-flight ones had
     // completed), surfacing as a spurious "someone else changed this"
     // conflict against the app's own rapid-fire edits.
+    //
+    // That debounce only ever throttled the network save, though — every
+    // onChange tick still updated `diagram.source` immediately, and
+    // DiagramView re-renders (a full mermaid.render()) any time `source`
+    // changes. A color drag was therefore triggering a full Mermaid
+    // re-render on every single tick with nothing capping the rate, which
+    // was enough to lock up the whole machine on a real diagram (see
+    // NODE_COLOR_RENDER_DEBOUNCE_MS above). scheduleNodeColorUpdate throttles
+    // the actual `diagram.source` commit the same way; only the last color
+    // value in a burst of drag ticks ends up applied.
     function applyNodeStyle(prop, value) {
-      updateDiagram(diagram.id, {
-        source: upsertStyle(diagram.source, currentNode, { [prop]: value }),
+      scheduleNodeColorUpdate(() => {
+        updateDiagram(diagram.id, {
+          source: upsertStyle(diagram.source, currentNode, { [prop]: value }),
+        });
       });
+    }
+
+    function flushNodeColorAndSave() {
+      flushNodeColorUpdate();
+      flushSave();
     }
 
     return (
@@ -434,7 +544,7 @@ export default function App() {
             className="node-color-input"
             value={current.fill || '#ffffff'}
             onChange={(e) => applyNodeStyle('fill', e.target.value)}
-            onBlur={flushSave}
+            onBlur={flushNodeColorAndSave}
           />
         </label>
         <label className="node-color-label">
@@ -444,7 +554,7 @@ export default function App() {
             className="node-color-input"
             value={current.stroke || '#333333'}
             onChange={(e) => applyNodeStyle('stroke', e.target.value)}
-            onBlur={flushSave}
+            onBlur={flushNodeColorAndSave}
           />
         </label>
         <label className="node-color-label">
@@ -454,7 +564,7 @@ export default function App() {
             className="node-color-input"
             value={current.color || '#000000'}
             onChange={(e) => applyNodeStyle('color', e.target.value)}
-            onBlur={flushSave}
+            onBlur={flushNodeColorAndSave}
           />
         </label>
         <button
