@@ -507,7 +507,8 @@ has text/edge-label colors that assume a light backdrop, and switching the
 backdrop to dark chrome-side made that text nearly invisible while leaving
 the diagram's own colors untouched. **New diagrams default their Mermaid
 theme to `'dark'` when the panel is effectively in dark mode** (same
-`effectiveDark` resolution as above), `'default'` otherwise — deliberately
+`effectiveDark` resolution as above), `'brand'` otherwise (changed from
+`'default'` — see "Diagram visual modernization" below) — deliberately
 only affects diagrams that don't exist yet; no auto-switching of an
 existing diagram's theme, since that would change what already-authored
 content renders as out from under whoever's viewing it.
@@ -624,12 +625,23 @@ Mermaid bakes those as literal `fill`/`stroke` attributes directly, not
 through the `<style>` block, bypassing `themeVariables` entirely for that
 element type. Flowchart node coloring is confirmed working. A new
 `applyModernPolish()` step (runs after `inlineSvgStyles()`) rounds node/
-actor corners and thickens edge strokes via real SVG presentation
-attributes (`rx`/`ry`/`stroke-width`) — not CSS, so no `STYLE_PROPS_TO_ATTRS`
+actor corners (`rx`/`ry`), thickens edge strokes (`stroke-width`), and adds
+a subtle drop shadow (an injected SVG `<feDropShadow>` filter, namespaced
+per-diagram via the existing `safeDiagramId` prefix so it can't collide
+when multiple diagrams render on the same page) — all real SVG
+presentation attributes/elements, not CSS, so no `STYLE_PROPS_TO_ATTRS`
 change was needed; verified against real mermaid v11.16.0 output that
 state diagrams use a `.transition` edge class, distinct from flowchart's
-`.edgePath`/`.flowchart-link`. Deployed and forge-installed on the
-connected test site; not yet browser-confirmed by the user.
+`.edgePath`/`.flowchart-link`, and that the injected filter doesn't collide
+with Mermaid's own unrelated built-in "drop-shadow" filter id. **Revised
+after real-browser feedback**: the first version (rx 6, stroke-width 1.5,
+no shadow) was too subtle to register as "different" — bumped to rx 8,
+stroke-width 2, plus the shadow. Also: new diagrams now default to the
+`'brand'` theme instead of `'default'` (see "Known state" above) — the
+brand palette/font were otherwise invisible in practice since nobody found
+the theme picker. Deployed and forge-installed on the connected test
+site; templates and CodeMirror rendering confirmed working by the user,
+brand-theme/polish visual confirmation still pending as of this revision.
 
 **Diagram templates (2026-07-22).** New `diagram-templates.js`: preset
 starter source for Flowchart, Sequence, State, Class, ER, Gantt, Pie,
@@ -644,7 +656,7 @@ confirmed CSP problem) blocked confirming mindmap, and architecture-beta
 was never checked at all. Don't add either as a template without running
 the same render-and-inspect check first.
 
-**CodeMirror 6 editor — Phase 0 spike, gated on real-browser confirmation
+**CodeMirror 6 editor — Phase 0 spike, real-browser CONFIRMED WORKING
 (2026-07-22).** Monaco was ruled out without prototyping it: its language-
 service workers need `blob:`-based script loading, which Atlassian staff
 have confirmed is an unsupported `script-src` CSP scheme on Forge with no
@@ -663,11 +675,20 @@ needed once a diagram is actually being edited — bundled eagerly it nearly
 tripled the main entrypoint (205KB→579KB); lazy, the main entrypoint stays
 at 234KB with CodeMirror as its own 382KB chunk loaded on first edit.
 Replaces the plain `<textarea>` in `App.jsx`, preserving the existing
-debounced-save/`onBlur`-flush contract unchanged. **This is explicitly a
-stop-and-check point, not a finished feature**: deployed and forge-installed
-on the connected test site, but not yet confirmed in a real browser — the
-whole point of shipping it this small is that if the `unsafe-inline`
-permission turns out not to cover what CodeMirror needs (Atlassian's docs
-don't say), only this one small piece needs reworking, not a full
-CodeMirror + Mermaid-grammar + polish feature built on an unverified
-foundation.
+debounced-save/`onBlur`-flush contract unchanged. **Confirmed by the user
+in a real browser**: the `unsafe-inline` styles permission does cover what
+CodeMirror needs — it renders, typing/blur-save/Ctrl+F search all work,
+validating the whole track's central bet before any further CodeMirror
+work (Mermaid grammar, etc.) got built on top of it.
+
+**One real bug found during that confirmation, fixed**: CodeMirror's own
+default styling is light-only (a white gutter/background regardless of
+surrounding chrome), so it stayed light even with Jira in dark mode.
+Fixed via `EditorView.theme()` reading the same CSS custom properties
+`styles.css` already flips via `:root[data-color-mode='dark']`
+(`--color-text`/`--color-input-bg`/`--color-subtle-bg`/etc.) rather than a
+separate hardcoded CodeMirror dark theme to keep in sync by hand — the
+same pattern every other input/button in this app already follows for
+dark mode. No Mermaid grammar/syntax highlighting yet — that's still a
+deliberate fast-follow, now that the baseline is confirmed rather than
+just deployed.
