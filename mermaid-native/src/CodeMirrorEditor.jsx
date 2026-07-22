@@ -13,6 +13,8 @@ function loadCodeMirror() {
       import(/* webpackChunkName: "codemirror" */ 'codemirror'),
       import(/* webpackChunkName: "codemirror" */ '@codemirror/state'),
       import(/* webpackChunkName: "codemirror" */ '@codemirror/view'),
+      import(/* webpackChunkName: "codemirror" */ '@codemirror/language'),
+      import(/* webpackChunkName: "codemirror" */ './codemirror-mermaid-lang.js'),
     ]);
   }
   return cmPromise;
@@ -25,10 +27,12 @@ function loadCodeMirror() {
  * adding a wrapper-of-a-wrapper dependency (see icons.jsx/Spinner.jsx/
  * SectionMessage.jsx for the same approach applied to Atlaskit).
  *
- * Phase 0 spike (see CLAUDE.md): line numbers, history, bracket matching,
- * and built-in search all come from `basicSetup` — no Mermaid-specific
- * syntax highlighting yet. CodeMirror 6 renders cursor/selection via
- * inline styles it injects itself, which only works now that
+ * Line numbers, history, and bracket matching, and built-in search all
+ * come from `basicSetup`; Mermaid syntax highlighting comes from
+ * codemirror-mermaid-lang.js's hand-rolled StreamLanguage scanner (see
+ * that file for why — no maintained CodeMirror 6 Mermaid grammar exists).
+ * CodeMirror 6 renders cursor/selection via inline styles it injects
+ * itself, which only works now that
  * manifest.yml declares `permissions.content.styles: ['unsafe-inline']`
  * — this component is the actual end-to-end test of whether that
  * permission does what Forge's docs (silently) implied it does.
@@ -74,13 +78,22 @@ export default function CodeMirrorEditor({ value, onChange, onBlur }) {
 
   useEffect(() => {
     let cancelled = false;
-    loadCodeMirror().then(([{ basicSetup }, { EditorState }, { EditorView }]) => {
+    loadCodeMirror().then(
+      ([
+        { basicSetup },
+        { EditorState },
+        { EditorView },
+        { syntaxHighlighting },
+        { mermaidLanguage, mermaidHighlightStyle },
+      ]) => {
       if (cancelled) return;
       const view = new EditorView({
         state: EditorState.create({
           doc: value || '',
           extensions: [
             basicSetup,
+            mermaidLanguage,
+            syntaxHighlighting(mermaidHighlightStyle),
             editorTheme(EditorView),
             EditorView.lineWrapping,
             EditorView.contentAttributes.of({ spellcheck: 'false' }),

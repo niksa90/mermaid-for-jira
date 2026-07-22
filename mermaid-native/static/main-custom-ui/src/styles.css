@@ -423,11 +423,21 @@ body {
   padding: 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: #fafbfc;
+  /* background-color/-image kept separate (not the `background` shorthand)
+     so the dark-mode override below only needs to touch what actually
+     differs, instead of restating the whole declaration. A dotted grid —
+     the "design canvas" look from the reference screenshot — reads as a
+     deliberate surface rather than a stray blank rectangle, and stays
+     subtle enough (low-opacity dots) not to compete with the diagram's own
+     shapes. */
+  background-color: #fafbfc;
+  background-image: radial-gradient(circle, rgba(9, 30, 66, 0.12) 1px, transparent 1px);
+  background-size: 16px 16px;
 }
 
 .diagram-canvas-wrap[data-surface='dark'] {
-  background: #22272b;
+  background-color: #22272b;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
   border-color: #454f59;
 }
 

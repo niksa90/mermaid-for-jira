@@ -388,6 +388,31 @@ function applyModernPolish(svgString, idPrefix) {
       if (!el.hasAttribute('filter')) {
         el.setAttribute('filter', `url(#${filterId})`);
       }
+      // Fatter borders, per direct user feedback comparing against a
+      // reference screenshot — Mermaid's own theme stroke-width (usually
+      // 1px) reads as flimsy. Overwrites unconditionally (not gated on
+      // !hasAttribute like rx/filter above): every node already carries
+      // SOME stroke-width from the theme's <style> block by this point, so
+      // "already has the attribute" is guaranteed true and would otherwise
+      // always skip this.
+      el.setAttribute('stroke-width', '2');
+    });
+
+    // Universal modern font + slightly heavier weight, applied regardless
+    // of the diagram's chosen color theme (unlike BRAND_FONT_FAMILY in
+    // withTheme(), which only applies under the 'brand' theme) — per
+    // direct user feedback that text needed to "stand out more" across the
+    // board, not just on the one custom theme. @fontsource/inter is
+    // already loaded unconditionally (see App.jsx), so this is just
+    // pointing existing text at the font that's already available. Runs
+    // after inlineSvgStyles(), so it overwrites whatever font-family that
+    // pass baked in from the theme's own <style> block.
+    doc.querySelectorAll('text, tspan').forEach((el) => {
+      el.setAttribute(
+        'font-family',
+        '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+      );
+      el.setAttribute('font-weight', '500');
     });
 
     // .transition is stateDiagram-v2's edge class (confirmed against real
