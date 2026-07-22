@@ -14,6 +14,7 @@ import {
 import DiagramView from '../../../src/DiagramView';
 import DiagramErrorBoundary from '../../../src/ErrorBoundary';
 import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
+import { DIAGRAM_TEMPLATES, templateById } from '../../../src/diagram-templates';
 import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
 import {
@@ -62,11 +63,11 @@ function payloadSizeBytes(diagramsArr) {
   return new TextEncoder().encode(JSON.stringify({ diagrams: diagramsArr })).length;
 }
 
-function newDiagram(theme = 'default') {
+function newDiagram(theme = 'default', source) {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     label: '',
-    source: 'flowchart TD\n  A[Start] --> B[End]',
+    source: source || 'flowchart TD\n  A[Start] --> B[End]',
     theme,
     section: '',
   };
@@ -135,6 +136,11 @@ export default function App() {
   // viewBox-based pan/zoom for the same constraint), so a continuous
   // inline flex-basis isn't an option here.
   const [splitPercent, setSplitPercent] = useState(50);
+  // Which template the "Add a diagram" picker currently has selected — a
+  // transient UI choice, not diagram content, so it's client-only. Resets
+  // to the blank-flowchart default after each add rather than persisting
+  // the last pick, so a forgotten selection can't surprise a later add.
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
   // Which node the per-node color picker is currently pointed at, per
   // diagram — a view preference (which node's colors you're looking at),
   // not diagram content, so client-only like modes/collapsed above.
@@ -370,9 +376,11 @@ export default function App() {
     // new diagrams look any different day-to-day. Still only affects
     // diagrams that don't exist yet — no auto-switching of an existing
     // diagram's theme, same rule as the dark/default choice below.
-    const diagram = newDiagram(effectiveDark ? 'dark' : 'brand');
+    const template = selectedTemplateId ? templateById(selectedTemplateId) : null;
+    const diagram = newDiagram(effectiveDark ? 'dark' : 'brand', template?.source);
     setModes((prev) => ({ ...prev, [diagram.id]: 'edit' }));
     persist([...latestDiagramsRef.current, diagram], { immediate: true });
+    setSelectedTemplateId('');
   }
 
   function startSplitResize(e) {
@@ -904,9 +912,24 @@ export default function App() {
       )}
 
       <div className="board-actions">
-        <button type="button" className="btn btn-primary" onClick={addDiagram}>
-          Add a diagram
-        </button>
+        <div className="add-diagram-control">
+          <select
+            className="select-input"
+            value={selectedTemplateId}
+            onChange={(e) => setSelectedTemplateId(e.target.value)}
+            aria-label="Diagram template"
+          >
+            <option value="">Blank flowchart</option>
+            {DIAGRAM_TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="btn btn-primary" onClick={addDiagram}>
+            Add a diagram
+          </button>
+        </div>
         <span className={`save-status save-status-${saveState}`}>
           {saveState === 'saving' && (
             <>

@@ -597,6 +597,16 @@ body {
   margin-top: 8px;
 }
 
+.add-diagram-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-diagram-control .select-input {
+  width: 140px;
+}
+
 .save-status {
   display: inline-flex;
   align-items: center;
