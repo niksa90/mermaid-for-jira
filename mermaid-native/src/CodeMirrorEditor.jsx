@@ -33,6 +33,36 @@ function loadCodeMirror() {
  * — this component is the actual end-to-end test of whether that
  * permission does what Forge's docs (silently) implied it does.
  */
+// CodeMirror's own default styling is light-only (a white gutter/background
+// regardless of surrounding chrome). Rather than a separate hardcoded dark
+// theme to keep in sync by hand, this reads the same CSS custom properties
+// styles.css already flips via `:root[data-color-mode='dark']` — the exact
+// pattern the rest of this app's dark mode already follows (see CLAUDE.md's
+// "Dark mode" note) — so CodeMirror's chrome follows Jira's light/dark
+// chrome automatically, the same as every other input/button in this app.
+function editorTheme(EditorView) {
+  return EditorView.theme({
+    '&': {
+      color: 'var(--color-text)',
+      backgroundColor: 'var(--color-input-bg)',
+    },
+    '.cm-content': {
+      caretColor: 'var(--color-text)',
+    },
+    '.cm-gutters': {
+      backgroundColor: 'var(--color-subtle-bg)',
+      color: 'var(--color-text-subtle)',
+      border: 'none',
+    },
+    '.cm-activeLine': {
+      backgroundColor: 'var(--color-subtle-bg)',
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: 'var(--color-subtle-bg-hover)',
+    },
+  });
+}
+
 export default function CodeMirrorEditor({ value, onChange, onBlur }) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
@@ -51,6 +81,7 @@ export default function CodeMirrorEditor({ value, onChange, onBlur }) {
           doc: value || '',
           extensions: [
             basicSetup,
+            editorTheme(EditorView),
             EditorView.lineWrapping,
             EditorView.contentAttributes.of({ spellcheck: 'false' }),
             EditorView.updateListener.of((update) => {
