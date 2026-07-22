@@ -619,11 +619,23 @@ font. `withTheme()` now builds a full init-directive object for `'brand'`
 instead of a bare theme-name string — confirmed via a jsdom + real-mermaid
 spike that `fontFamily` has to sit at the init directive's **top level**,
 not nested inside `themeVariables`, or Mermaid silently ignores it with no
-error. **Known gap, jsdom-confirmed**: the brand theme's `actorBkg`/
-`actorBorder` variables are unconfirmed for sequence-diagram actor boxes —
-Mermaid bakes those as literal `fill`/`stroke` attributes directly, not
-through the `<style>` block, bypassing `themeVariables` entirely for that
-element type. Flowchart node coloring is confirmed working. A new
+error. **Resolved — was a real bug, not a Mermaid limitation**: sequence-
+diagram actor boxes initially stayed the same light gray (`#eaeaea`/`#666`)
+regardless of theme, confirmed by the user via screenshots in both light
+and dark canvas. Root cause turned out to be in `inlineSvgStyles()` itself,
+not specific to the brand theme: Mermaid's raw SVG output bakes that
+fill/stroke onto actor `<rect>`s directly as a baseline default (not a
+per-element override), and `inlineSvgStyles()`'s original "don't clobber
+an attribute that already exists" check treated that baseline as if it
+were intentional, silently discarding the theme's own (confirmed real,
+theme-specific) `.actor{fill:...}` CSS rule for **every** theme, including
+Mermaid's built-in ones — not a brand-theme-specific gap at all. Fixed by
+tracking which (element, attribute) pairs the function has itself written
+during its own pass (a `WeakMap`), instead of checking `el.hasAttribute()`
+— which conflated Mermaid's pre-existing baseline attributes with actual
+prior per-element overrides. Re-verified the flowchart per-node `style()`
+override and the state-diagram `classDef`/`!important` override still win
+exactly as before (the scenario the original check was built for). A new
 `applyModernPolish()` step (runs after `inlineSvgStyles()`) rounds node/
 actor corners (`rx`/`ry`), thickens edge strokes (`stroke-width`), and adds
 a subtle drop shadow (an injected SVG `<feDropShadow>` filter, namespaced
@@ -640,8 +652,9 @@ stroke-width 2, plus the shadow. Also: new diagrams now default to the
 `'brand'` theme instead of `'default'` (see "Known state" above) — the
 brand palette/font were otherwise invisible in practice since nobody found
 the theme picker. Deployed and forge-installed on the connected test
-site; templates and CodeMirror rendering confirmed working by the user,
-brand-theme/polish visual confirmation still pending as of this revision.
+site; templates and CodeMirror rendering confirmed working by the user.
+The theme-switching bug fix above is deployed but not yet re-confirmed in
+a real browser as of this revision.
 
 **Diagram templates (2026-07-22).** New `diagram-templates.js`: preset
 starter source for Flowchart, Sequence, State, Class, ER, Gantt, Pie,
