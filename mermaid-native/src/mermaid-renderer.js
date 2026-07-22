@@ -390,12 +390,13 @@ function applyModernPolish(svgString, idPrefix) {
       }
       // Fatter borders, per direct user feedback comparing against a
       // reference screenshot — Mermaid's own theme stroke-width (usually
-      // 1px) reads as flimsy. Overwrites unconditionally (not gated on
-      // !hasAttribute like rx/filter above): every node already carries
-      // SOME stroke-width from the theme's <style> block by this point, so
-      // "already has the attribute" is guaranteed true and would otherwise
-      // always skip this.
-      el.setAttribute('stroke-width', '2');
+      // 1px) reads as flimsy. Bumped a second time (2 -> 3) per further
+      // feedback that 2 still wasn't enough of a delta. Overwrites
+      // unconditionally (not gated on !hasAttribute like rx/filter above):
+      // every node already carries SOME stroke-width from the theme's
+      // <style> block by this point, so "already has the attribute" is
+      // guaranteed true and would otherwise always skip this.
+      el.setAttribute('stroke-width', '3');
     });
 
     // Universal modern font + slightly heavier weight, applied regardless
