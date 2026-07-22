@@ -35,10 +35,28 @@ test('isDarkMermaidTheme is true only for the "dark" theme', () => {
 });
 
 test('every exposed theme is a real option, not the blank-slate "base" theme', () => {
-  // 'base' renders almost colorless without custom themeVariables (which
-  // this app doesn't support yet) — picking it as a plain menu item would
-  // look broken, not like a style choice. See mermaid-renderer.js.
+  // Raw 'base' renders almost colorless without custom themeVariables —
+  // picking it as a plain menu item would look broken, not like a style
+  // choice. 'brand' is that same base theme with the overrides applied, so
+  // it doesn't need a separate 'base' entry alongside it. See
+  // mermaid-renderer.js.
   assert.ok(!MERMAID_THEMES.includes('base'));
+  assert.ok(MERMAID_THEMES.includes('brand'));
+});
+
+test('withTheme expands "brand" into a base-theme init directive with themeVariables and a top-level fontFamily', () => {
+  const source = 'flowchart TD\n  A --> B';
+  const themed = withTheme(source, 'brand');
+  const initJson = themed.match(/^%%\{init: (.+)\}%%\n/)[1];
+  const init = JSON.parse(initJson);
+  assert.equal(init.theme, 'base');
+  // Must be top-level, not nested in themeVariables — Mermaid silently
+  // ignores a nested fontFamily instead of erroring (confirmed against the
+  // real mermaid package), so this would otherwise regress invisibly.
+  assert.ok(init.fontFamily.includes('Inter'));
+  assert.ok(init.themeVariables.primaryColor);
+  assert.equal(init.themeVariables.fontFamily, undefined);
+  assert.match(themed, /flowchart TD/);
 });
 
 test('safeDiagramId always starts with a letter, even with a numeric prefix', () => {

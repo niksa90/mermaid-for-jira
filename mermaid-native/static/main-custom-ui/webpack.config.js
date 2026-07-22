@@ -25,6 +25,13 @@ module.exports = {
         // real .css file loaded via <link> is CSP-safe.
         use: [MiniCssExtractPlugin.loader, 'css-loader'],
       },
+      {
+        // @font-face src url(...) references (e.g. @fontsource/inter's CSS)
+        // need an actual emitted file for css-loader to point at.
+        test: /\.(woff2?|ttf|otf)$/,
+        type: 'asset/resource',
+        generator: { filename: 'fonts/[name][ext]' },
+      },
     ],
   },
   resolve: {

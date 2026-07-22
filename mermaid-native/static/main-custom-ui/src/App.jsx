@@ -28,6 +28,12 @@ import {
   parseStateStyles,
   upsertStateStyle,
 } from '../../../src/state-style';
+// Regular weight only — this loads Inter for the Mermaid diagram canvas
+// text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
+// reskin. Browsers synthesize bold from this if a diagram happens to want
+// it, which is an acceptable minor degradation rather than doubling the
+// font payload for a weight most diagram text never uses.
+import '@fontsource/inter/400.css';
 import './styles.css';
 
 const SAVE_DEBOUNCE_MS = 600;

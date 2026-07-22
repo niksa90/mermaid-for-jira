@@ -36,11 +36,58 @@ async function ensureInit() {
   return mermaid;
 }
 
-// Built-in Mermaid themes we expose as a per-diagram style choice.
-// Excludes 'base': it's meant as a blank slate for custom themeVariables
-// overrides (not supported yet) and renders almost colorless on its own —
-// picking it with no overrides would look broken, not like a style option.
-export const MERMAID_THEMES = ['default', 'neutral', 'forest', 'dark'];
+// Built-in Mermaid themes we expose as a per-diagram style choice, plus our
+// own 'brand' preset (see BRAND_THEME_VARIABLES below). Excludes raw 'base':
+// it's meant as a blank slate for custom themeVariables overrides and
+// renders almost colorless on its own — picking it with no overrides would
+// look broken, not like a style option. 'brand' is exactly "base plus the
+// overrides that make it a real style", so it doesn't need a separate 'base'
+// entry alongside it.
+export const MERMAID_THEMES = ['default', 'neutral', 'forest', 'dark', 'brand'];
+
+// A custom theme built on Mermaid's 'base' theme + themeVariables — the
+// mechanism Mermaid itself provides for full customization — rather than a
+// second named built-in theme. Colors are hand-picked to sit alongside this
+// app's own chrome palette (styles.css's --color-primary/--color-text/
+// --color-border), not read from Atlaskit design tokens: that path was
+// already investigated once (see CLAUDE.md's "Atlaskit components and CSP"
+// section) and confirmed no token stylesheet is loaded in this Custom UI
+// iframe to read from.
+//
+// `fontFamily` must be a TOP-LEVEL key of the init directive below, not
+// nested inside themeVariables — confirmed by rendering both ways with the
+// real mermaid package (v11.16.0): nested, Mermaid silently keeps its
+// hardcoded default font with no error, which would otherwise look like a
+// config that "did nothing" with no signal as to why.
+const BRAND_FONT_FAMILY =
+  '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+const BRAND_THEME_VARIABLES = {
+  primaryColor: '#deebff',
+  primaryBorderColor: '#0c66e4',
+  primaryTextColor: '#172b4d',
+  lineColor: '#6b778c',
+  secondaryColor: '#e6fcff',
+  secondaryBorderColor: '#00a3bf',
+  tertiaryColor: '#eae6ff',
+  tertiaryBorderColor: '#6554c0',
+  noteBkgColor: '#fff7d6',
+  noteBorderColor: '#ff991f',
+  noteTextColor: '#172b4d',
+  actorBkg: '#deebff',
+  actorBorder: '#0c66e4',
+  actorTextColor: '#172b4d',
+  signalColor: '#44546f',
+  signalTextColor: '#172b4d',
+};
+// NOTE (jsdom-verified, real mermaid v11.16.0): the actorBkg/actorBorder
+// variables above are NOT confirmed to affect sequence-diagram actor boxes
+// — Mermaid bakes their fill/stroke ("#eaeaea"/"#666") as literal SVG
+// attributes directly, not through the <style> block's class rules, and
+// that hardcoded pair came through unchanged under the 'base' theme with
+// these overrides set. Flowchart node coloring (primaryColor/
+// primaryBorderColor) IS confirmed working. Don't assume the 'brand' theme
+// fully reskins sequence diagrams until this is re-checked in a real
+// browser or against a different themeVariables key.
 
 /**
  * Prepends a Mermaid init directive so a diagram can pick its own theme
@@ -50,6 +97,14 @@ export const MERMAID_THEMES = ['default', 'neutral', 'forest', 'dark'];
 export function withTheme(source, theme) {
   const trimmed = (source || '').trim();
   if (!trimmed || !theme || theme === 'default') return trimmed;
+  if (theme === 'brand') {
+    const init = {
+      theme: 'base',
+      fontFamily: BRAND_FONT_FAMILY,
+      themeVariables: BRAND_THEME_VARIABLES,
+    };
+    return `%%{init: ${JSON.stringify(init)}}%%\n${trimmed}`;
+  }
   return `%%{init: {"theme": "${theme}"}}%%\n${trimmed}`;
 }
 
@@ -82,7 +137,7 @@ export async function renderMermaid(id, source) {
     throw new Error(readableParseError(err));
   }
   const { svg } = await mermaid.render(id, trimmed);
-  return inlineSvgStyles(svg);
+  return applyModernPolish(inlineSvgStyles(svg));
 }
 
 // CSS properties that have a direct SVG presentation-attribute equivalent.
@@ -231,6 +286,58 @@ function inlineSvgStyles(svgString) {
       });
       el.removeAttribute('style');
     });
+
+    return new XMLSerializer().serializeToString(svgEl);
+  } catch {
+    return svgString;
+  }
+}
+
+/**
+ * Rounds node/actor corners and gives edges a slightly heavier stroke —
+ * Mermaid's default shapes otherwise render sharp-cornered with a 1px
+ * hairline stroke, which reads as dated next to Jira's own rounded,
+ * low-contrast UI chrome. Applied as real SVG presentation attributes
+ * (rx/ry/stroke-width), the same mechanism inlineSvgStyles() uses for
+ * colors — not CSS, so it isn't blocked by Forge's CSP and doesn't need
+ * STYLE_PROPS_TO_ATTRS extended. Runs after inlineSvgStyles() so it only
+ * ever adjusts attributes already baked onto the final elements, never
+ * competes with the <style>-block cascade pass above.
+ *
+ * Selectors target Mermaid's own class names, confirmed against the real
+ * v11.16.0 output: node shapes sit inside a wrapping `<g class="node">` (the
+ * class isn't on the shape itself, hence the descendant selector), while
+ * sequence-diagram actor boxes carry `class="actor ..."` directly. Applies
+ * uniformly regardless of the diagram's chosen color theme — this is a
+ * shape/weight change, not a color one. Every selector here degrades safely
+ * if it matches nothing (e.g. a diagram type with different class names),
+ * so this is best-effort polish, not a correctness-critical pass; verify
+ * visually across diagram types after changing these selectors.
+ */
+function applyModernPolish(svgString) {
+  try {
+    const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+    const svgEl = doc.documentElement;
+    if (!svgEl || svgEl.nodeName === 'parsererror') return svgString;
+
+    doc.querySelectorAll('.node rect, .node polygon, .actor').forEach((el) => {
+      if (el.tagName.toLowerCase() === 'rect' && !el.hasAttribute('rx')) {
+        el.setAttribute('rx', '6');
+        el.setAttribute('ry', '6');
+      }
+    });
+
+    // .transition is stateDiagram-v2's edge class (confirmed against real
+    // v11.16.0 output — state diagrams don't reuse flowchart's .edgePath/
+    // .flowchart-link at all, a different mechanism from the shared node/
+    // actor rounding above).
+    doc
+      .querySelectorAll(
+        '.flowchart-link, .edgePath path, .messageLine0, .messageLine1, .transition'
+      )
+      .forEach((el) => {
+        el.setAttribute('stroke-width', '1.5');
+      });
 
     return new XMLSerializer().serializeToString(svgEl);
   } catch {
