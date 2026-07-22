@@ -605,8 +605,26 @@ body {
   box-shadow: 0 0 0 1px var(--color-border-focus);
 }
 
+/* `appearance: none` above (needed to strip each browser's inconsistent
+   native <select> chrome so it matches .text-input) also strips the native
+   dropdown arrow — with nothing replacing it, a <select> was visually
+   indistinguishable from a plain text input. Redrawn here as a background
+   image (a data-URI SVG chevron, not an inline style attribute — CSP-safe,
+   same as everything else in this stylesheet) rather than an <Icon>
+   element, since CSS is the only way to position content inside a native
+   <select>'s own padding box. Colored to match --color-text-subtle; kept
+   as a literal hex rather than a CSS variable since a data-URI's contents
+   are a static string baked at author time, not something a custom
+   property can be substituted into. */
 .select-input {
-  padding-right: 24px;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23626F86' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+:root[data-color-mode='dark'] .select-input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%238C9BAB' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
 }
 
 /* --- Board footer / save status --- */
