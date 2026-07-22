@@ -12,6 +12,7 @@ import {
   ChevronRightIcon,
 } from '../../../src/icons';
 import DiagramView from '../../../src/DiagramView';
+import CodeMirrorEditor from '../../../src/CodeMirrorEditor';
 import DiagramErrorBoundary from '../../../src/ErrorBoundary';
 import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
 import { DIAGRAM_TEMPLATES, templateById } from '../../../src/diagram-templates';
@@ -793,12 +794,10 @@ export default function App() {
             {renderNodeColorPicker(diagram)}
             <div className="editor-split" data-split={splitPercent}>
               <div className="editor-pane">
-                <textarea
-                  className="mermaid-textarea"
+                <CodeMirrorEditor
                   value={diagram.source}
-                  onChange={(e) => updateDiagram(diagram.id, { source: e.target.value })}
+                  onChange={(source) => updateDiagram(diagram.id, { source })}
                   onBlur={flushSave}
-                  spellCheck={false}
                 />
               </div>
               <div

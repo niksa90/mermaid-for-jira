@@ -347,24 +347,45 @@ body {
 .editor-split[data-split='80'] .editor-pane { flex-basis: 80%; }
 .editor-split[data-split='80'] .preview-pane { flex-basis: 20%; }
 
-.mermaid-textarea {
-  width: 100%;
+/* CodeMirrorEditor.jsx's wrapper. min-height/overflow bound the editor the
+   same way .mermaid-textarea used to; CodeMirror renders its own internal
+   padding/font-size/line-height via the styles it injects (only possible
+   now that manifest.yml opts into unsafe-inline — see CodeMirrorEditor.jsx),
+   so this only needs to own the outer frame, not the text styling. */
+.codemirror-editor {
   min-height: 220px;
-  resize: vertical;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   box-sizing: border-box;
-  color: var(--color-text);
+  overflow: hidden;
 }
 
-.mermaid-textarea:focus {
+.codemirror-editor .cm-editor {
+  height: 100%;
+  min-height: 220px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.codemirror-editor .cm-editor.cm-focused {
   outline: none;
+}
+
+.codemirror-editor:focus-within {
   border-color: var(--color-border-focus);
   box-shadow: 0 0 0 1px var(--color-border-focus);
+}
+
+.codemirror-editor-hidden {
+  display: none;
+}
+
+.codemirror-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 220px;
 }
 
 .preview-pane {

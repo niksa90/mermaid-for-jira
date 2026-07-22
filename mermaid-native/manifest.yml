@@ -33,3 +33,22 @@ permissions:
     # https://developer.atlassian.com/cloud/jira/platform/scopes-for-oauth-2-3LO-and-forge-apps/
     - read:issue.property:jira
     - write:issue.property:jira
+  content:
+    # Opts this Custom UI iframe's CSP into inline <style>/style="..." —
+    # without this, real editor libraries (CodeMirror/Monaco) can't render
+    # at all (both position cursor/selection via inline style), which is
+    # the whole reason this app has hand-rolled every UI component and
+    # baked Mermaid's own theming into SVG presentation attributes instead
+    # of letting its <style> block through as-is (see CLAUDE.md's CSP
+    # section). Deliberate trade-off, confirmed with the user: this makes
+    # the app ineligible for the "Runs on Atlassian" Marketplace badge
+    # (https://developer.atlassian.com/platform/marketplace/runs-on-atlassian/),
+    # which only matters for Marketplace-listed apps — this one isn't
+    # listed, so it costs nothing today. Residual risk this widens: any
+    # Mermaid diagram source is written by the same Jira users who view it
+    # (no third-party/anonymous diagram authorship in this app), Mermaid
+    # runs with securityLevel:'strict' + its own DOMPurify sanitization
+    # regardless, and this permission only affects style-src, not
+    # script-src — so it doesn't reopen inline-script execution.
+    styles:
+      - 'unsafe-inline'
