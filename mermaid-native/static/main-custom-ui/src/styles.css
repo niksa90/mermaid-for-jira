@@ -291,14 +291,61 @@ body {
 
 .editor-split {
   display: flex;
-  gap: 12px;
+  align-items: stretch;
 }
 
 .editor-pane,
 .preview-pane {
-  flex: 1 1 0;
+  flex: 1 1 50%;
   min-width: 0;
 }
+
+.editor-split-divider {
+  flex: none;
+  width: 6px;
+  margin: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-border);
+  cursor: col-resize;
+}
+
+.editor-split-divider:hover,
+.editor-split-divider:focus-visible {
+  background: var(--color-border-focus);
+  outline: none;
+}
+
+/* Discrete drag-to-resize steps for .editor-split, driven by the
+   `data-split` attribute (an int percent, 5% increments) rather than an
+   inline `style="flex-basis:..."` — Forge Custom UI's CSP blocks inline
+   style attributes entirely (see DiagramCanvas.jsx's viewBox-based
+   pan/zoom for the same constraint), so the split ratio is expressed as
+   a fixed set of CSS rules the JS side just selects between. 50% is the
+   unmarked default above; only the non-default steps need a rule. */
+.editor-split[data-split='20'] .editor-pane { flex-basis: 20%; }
+.editor-split[data-split='20'] .preview-pane { flex-basis: 80%; }
+.editor-split[data-split='25'] .editor-pane { flex-basis: 25%; }
+.editor-split[data-split='25'] .preview-pane { flex-basis: 75%; }
+.editor-split[data-split='30'] .editor-pane { flex-basis: 30%; }
+.editor-split[data-split='30'] .preview-pane { flex-basis: 70%; }
+.editor-split[data-split='35'] .editor-pane { flex-basis: 35%; }
+.editor-split[data-split='35'] .preview-pane { flex-basis: 65%; }
+.editor-split[data-split='40'] .editor-pane { flex-basis: 40%; }
+.editor-split[data-split='40'] .preview-pane { flex-basis: 60%; }
+.editor-split[data-split='45'] .editor-pane { flex-basis: 45%; }
+.editor-split[data-split='45'] .preview-pane { flex-basis: 55%; }
+.editor-split[data-split='55'] .editor-pane { flex-basis: 55%; }
+.editor-split[data-split='55'] .preview-pane { flex-basis: 45%; }
+.editor-split[data-split='60'] .editor-pane { flex-basis: 60%; }
+.editor-split[data-split='60'] .preview-pane { flex-basis: 40%; }
+.editor-split[data-split='65'] .editor-pane { flex-basis: 65%; }
+.editor-split[data-split='65'] .preview-pane { flex-basis: 35%; }
+.editor-split[data-split='70'] .editor-pane { flex-basis: 70%; }
+.editor-split[data-split='70'] .preview-pane { flex-basis: 30%; }
+.editor-split[data-split='75'] .editor-pane { flex-basis: 75%; }
+.editor-split[data-split='75'] .preview-pane { flex-basis: 25%; }
+.editor-split[data-split='80'] .editor-pane { flex-basis: 80%; }
+.editor-split[data-split='80'] .preview-pane { flex-basis: 20%; }
 
 .mermaid-textarea {
   width: 100%;

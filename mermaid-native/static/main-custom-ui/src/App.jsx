@@ -59,7 +59,7 @@ function payloadSizeBytes(diagramsArr) {
 function newDiagram(theme = 'default') {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    label: 'New diagram',
+    label: '',
     source: 'flowchart TD\n  A[Start] --> B[End]',
     theme,
     section: '',
@@ -120,6 +120,15 @@ export default function App() {
   // live-typed text here and only committing to diagram.section on blur
   // keeps the input's DOM node stable while typing.
   const [sectionDraft, setSectionDraft] = useState({});
+  // Editor/preview split ratio (editor-pane width, as a percent, in 5%
+  // steps). A view preference, not diagram content, so it's client-only
+  // and shared across every diagram card's split rather than persisted.
+  // Applied via a `data-split` attribute + discrete CSS rules
+  // (styles.css), not an inline `style` prop — Forge Custom UI's CSP
+  // blocks inline style attributes/tags entirely (see DiagramCanvas.jsx's
+  // viewBox-based pan/zoom for the same constraint), so a continuous
+  // inline flex-basis isn't an option here.
+  const [splitPercent, setSplitPercent] = useState(50);
   // Which node the per-node color picker is currently pointed at, per
   // diagram — a view preference (which node's colors you're looking at),
   // not diagram content, so client-only like modes/collapsed above.
@@ -353,6 +362,29 @@ export default function App() {
     const diagram = newDiagram(effectiveDark ? 'dark' : 'default');
     setModes((prev) => ({ ...prev, [diagram.id]: 'edit' }));
     persist([...latestDiagramsRef.current, diagram], { immediate: true });
+  }
+
+  function startSplitResize(e) {
+    e.preventDefault();
+    const container = e.currentTarget.parentElement;
+    const rect = container.getBoundingClientRect();
+
+    function onMove(moveEvent) {
+      const x = moveEvent.clientX - rect.left;
+      const raw = (x / rect.width) * 100;
+      const stepped = Math.round(raw / 5) * 5;
+      setSplitPercent(Math.min(80, Math.max(20, stepped)));
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  function nudgeSplit(delta) {
+    setSplitPercent((prev) => Math.min(80, Math.max(20, prev + delta)));
   }
 
   function updateDiagram(id, patch, opts) {
@@ -620,10 +652,10 @@ export default function App() {
           {mode === 'edit' ? (
             <input
               className="text-input diagram-label-input"
-              value={diagram.label}
+              value={diagram.label ?? ''}
               onChange={(e) => updateDiagram(diagram.id, { label: e.target.value })}
               onBlur={flushSave}
-              placeholder="Diagram label"
+              placeholder="Untitled diagram"
             />
           ) : (
             <h3 className="diagram-title">{diagram.label || 'Untitled diagram'}</h3>
@@ -740,7 +772,7 @@ export default function App() {
               />
             </div>
             {renderNodeColorPicker(diagram)}
-            <div className="editor-split">
+            <div className="editor-split" data-split={splitPercent}>
               <div className="editor-pane">
                 <textarea
                   className="mermaid-textarea"
@@ -750,6 +782,22 @@ export default function App() {
                   spellCheck={false}
                 />
               </div>
+              <div
+                className="editor-split-divider"
+                role="separator"
+                aria-orientation="vertical"
+                aria-valuenow={splitPercent}
+                aria-valuemin={20}
+                aria-valuemax={80}
+                aria-label="Resize editor and preview"
+                tabIndex={0}
+                onMouseDown={startSplitResize}
+                onDoubleClick={() => setSplitPercent(50)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowLeft') nudgeSplit(-5);
+                  if (e.key === 'ArrowRight') nudgeSplit(5);
+                }}
+              />
               <div className="preview-pane">
                 <DiagramErrorBoundary>
                   <DiagramView source={diagram.source} theme={diagram.theme} idPrefix={diagram.id} />
