@@ -289,6 +289,55 @@ body {
   border-radius: 2px;
 }
 
+/* Click-on-the-bubble style popover (DiagramCanvas.jsx's onNodeClick, wired
+   up in App.jsx's renderNodePopover). `left`/`top` are set inline per-click
+   (position: fixed, viewport coordinates from the clicked node's own
+   getBoundingClientRect()) — permitted by manifest.yml's
+   `content.styles: ['unsafe-inline']`, the same permission CodeMirror
+   needed. Everything else here is a static class, matching every other
+   piece of chrome in this app. `transform: translateX(-50%)` centers the
+   popover under the clicked node horizontally without needing JS to know
+   its own width ahead of time. */
+.node-style-popover {
+  position: fixed;
+  z-index: 1100;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--color-page-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 16px rgba(9, 30, 66, 0.2), 0 0 1px rgba(9, 30, 66, 0.3);
+}
+
+.node-style-popover-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 4px;
+  border-right: 1px solid var(--color-border);
+}
+
+.node-style-popover-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-style-popover-close {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
 .editor-split {
   display: flex;
   align-items: stretch;

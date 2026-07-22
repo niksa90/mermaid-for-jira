@@ -18,18 +18,7 @@ import { MERMAID_THEMES } from '../../../src/mermaid-renderer';
 import { DIAGRAM_TEMPLATES, templateById } from '../../../src/diagram-templates';
 import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
-import {
-  isFlowchartSource,
-  parseFlowchartNodeIds,
-  parseNodeStyles,
-  upsertNodeStyle,
-} from '../../../src/node-style';
-import {
-  isStateDiagramSource,
-  parseStateIds,
-  parseStateStyles,
-  upsertStateStyle,
-} from '../../../src/state-style';
+import { resolveNodeStyleKind } from '../../../src/node-style-kind';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
 // text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
 // reskin. Browsers synthesize bold from this if a diagram happens to want
@@ -146,6 +135,16 @@ export default function App() {
   // diagram — a view preference (which node's colors you're looking at),
   // not diagram content, so client-only like modes/collapsed above.
   const [selectedNode, setSelectedNode] = useState({});
+  // The click-on-the-bubble style popover: which diagram/node it's anchored
+  // to and where, or null when closed. Only one can be open at a time
+  // (global, not per-diagram, unlike selectedNode/modes/collapsed above) —
+  // `rect` is a plain snapshot of the clicked node's getBoundingClientRect()
+  // taken once at click time, not re-measured live on pan/zoom/scroll (see
+  // the click-to-style-plan project memory: re-tracking continuously was
+  // judged a rabbit hole with little payoff, so the popover just closes on
+  // the next outside click/Escape instead of following the node).
+  const [nodePopover, setNodePopover] = useState(null);
+  const nodePopoverRef = useRef(null);
   // Whether the panel is effectively rendering in dark mode (see
   // resolveEffectiveDark) — used only to pick a new diagram's starting
   // Mermaid theme (see addDiagram); never re-applied to existing diagrams.
@@ -253,6 +252,30 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  // Closes the click-to-style popover on Escape or on any pointerdown
+  // outside it — including the pointerdown that starts panning the canvas
+  // underneath it, since that's also outside the popover's own DOM node.
+  // Capture phase so this runs before DiagramCanvas's own pointerdown
+  // handler, and before a click on a *different* node reopens the popover
+  // there via onNodeClick.
+  useEffect(() => {
+    if (!nodePopover) return undefined;
+    function onDocPointerDown(e) {
+      if (nodePopoverRef.current && !nodePopoverRef.current.contains(e.target)) {
+        setNodePopover(null);
+      }
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setNodePopover(null);
+    }
+    document.addEventListener('pointerdown', onDocPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onDocPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [nodePopover]);
 
   // Flush any pending debounced save if the panel closes mid-edit.
   useEffect(
@@ -513,34 +536,23 @@ export default function App() {
     saveState !== 'too-large' && sizeBytes > MAX_PROPERTY_BYTES * SIZE_WARNING_RATIO;
 
   // Per-node fill/border/text color picker, shown in edit mode for
-  // flowchart and state diagrams with at least one node/state the parser
-  // could identify (see node-style.js / state-style.js). Other diagram
-  // types (sequence, ER, pie, gantt, ...) don't get this picker at all —
-  // Mermaid itself has no per-node style mechanism for them, verified
-  // against the real parser rather than assumed, not just a gap in this
-  // code.
+  // flowchart, state, and ER diagrams with at least one node/state/entity
+  // the parser could identify (see node-style-kind.js and the
+  // node-style.js/state-style.js/er-style.js modules it dispatches to).
+  // Other diagram types (sequence, pie, gantt, ...) don't get this picker at
+  // all — Mermaid itself has no per-element style mechanism for them,
+  // verified against the real parser rather than assumed, not just a gap in
+  // this code.
   //
-  // Flowcharts and state diagrams need genuinely different source syntax
-  // (flowchart's single `style NodeId ...` line vs. state diagram's
-  // two-line `classDef` + `class` pair — state diagrams reject the
-  // flowchart syntax outright), so the parse/read/write functions are
-  // swapped based on diagram type while the picker UI itself stays one
-  // shared implementation.
+  // This is one of two entry points into the same underlying styling data —
+  // see the click-on-the-bubble popover (renderNodePopover) below, which
+  // reads/writes through the exact same resolveNodeStyleKind() dispatch.
   function renderNodeColorPicker(diagram) {
-    let nodeIds;
-    let parseStyles;
-    let upsertStyle;
-    if (isFlowchartSource(diagram.source)) {
-      nodeIds = parseFlowchartNodeIds(diagram.source);
-      parseStyles = parseNodeStyles;
-      upsertStyle = upsertNodeStyle;
-    } else if (isStateDiagramSource(diagram.source)) {
-      nodeIds = parseStateIds(diagram.source);
-      parseStyles = parseStateStyles;
-      upsertStyle = upsertStateStyle;
-    } else {
-      return null;
-    }
+    const styleKind = resolveNodeStyleKind(diagram.source);
+    if (!styleKind) return null;
+    const nodeIds = styleKind.parseIds(diagram.source);
+    const parseStyles = styleKind.parseStyles;
+    const upsertStyle = styleKind.upsertStyle;
     if (nodeIds.length === 0) return null;
 
     const currentNode =
@@ -647,6 +659,122 @@ export default function App() {
           }
         >
           Reset node
+        </button>
+      </div>
+    );
+  }
+
+  // The click-on-the-bubble popover: a second entry point into the exact
+  // same per-node style data as renderNodeColorPicker above (both go
+  // through resolveNodeStyleKind), anchored to wherever the user clicked
+  // instead of living in the docked toolbar. Coexists with the dropdown
+  // deliberately rather than replacing it — a fallback for nodes that are
+  // hard to click precisely or currently panned off-screen (see the
+  // click-to-style-plan project memory).
+  //
+  // Positioned once from the rect DiagramCanvas captured at click time
+  // (position: fixed + inline left/top — permitted by manifest.yml's
+  // `content.styles: ['unsafe-inline']`, added for CodeMirror). Doesn't
+  // re-track the node's position on subsequent pan/zoom; it just closes on
+  // the next outside click, Escape, or (implicitly) the pointerdown that
+  // starts a new pan, all handled by the document-level effect above.
+  function renderNodePopover() {
+    if (!nodePopover) return null;
+    const diagram = diagrams.find((d) => d.id === nodePopover.diagramId);
+    if (!diagram) return null;
+    const styleKind = resolveNodeStyleKind(diagram.source);
+    // Guards against the popover outliving a source edit that changed the
+    // diagram's type or removed the clicked node entirely (e.g. typed over
+    // it in the editor while the popover from an earlier click was still
+    // open) — silently closes rather than operating on a stale node id.
+    if (!styleKind || styleKind.kind !== nodePopover.kind) return null;
+    const nodeIds = styleKind.parseIds(diagram.source);
+    if (!nodeIds.includes(nodePopover.nodeId)) return null;
+    const current = styleKind.parseStyles(diagram.source)[nodePopover.nodeId] || {};
+
+    // Same continuous-input debounce as renderNodeColorPicker's color
+    // inputs — see NODE_COLOR_RENDER_DEBOUNCE_MS above for why this can't
+    // be a plain immediate updateDiagram call.
+    function applyPopoverStyle(prop, value) {
+      scheduleNodeColorUpdate(() => {
+        updateDiagram(diagram.id, {
+          source: styleKind.upsertStyle(diagram.source, nodePopover.nodeId, { [prop]: value }),
+        });
+      });
+    }
+
+    function flushPopoverAndSave() {
+      flushNodeColorUpdate();
+      flushSave();
+    }
+
+    const { rect } = nodePopover;
+    const style = {
+      left: Math.max(8, rect.left + rect.width / 2),
+      top: rect.bottom + 8,
+    };
+
+    return (
+      <div className="node-style-popover" ref={nodePopoverRef} style={style}>
+        <div className="node-style-popover-header">
+          <span className="node-style-popover-title">{nodePopover.nodeId}</span>
+          <button
+            type="button"
+            className="btn btn-subtle btn-icon node-style-popover-close"
+            aria-label="Close style popover"
+            onClick={() => setNodePopover(null)}
+          >
+            ×
+          </button>
+        </div>
+        <label className="node-color-label">
+          Fill
+          <input
+            type="color"
+            className="node-color-input"
+            value={current.fill || '#ffffff'}
+            onChange={(e) => applyPopoverStyle('fill', e.target.value)}
+            onBlur={flushPopoverAndSave}
+          />
+        </label>
+        <label className="node-color-label">
+          Border
+          <input
+            type="color"
+            className="node-color-input"
+            value={current.stroke || '#333333'}
+            onChange={(e) => applyPopoverStyle('stroke', e.target.value)}
+            onBlur={flushPopoverAndSave}
+          />
+        </label>
+        <label className="node-color-label">
+          Text
+          <input
+            type="color"
+            className="node-color-input"
+            value={current.color || '#000000'}
+            onChange={(e) => applyPopoverStyle('color', e.target.value)}
+            onBlur={flushPopoverAndSave}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn btn-subtle"
+          onClick={() =>
+            updateDiagram(
+              diagram.id,
+              {
+                source: styleKind.upsertStyle(diagram.source, nodePopover.nodeId, {
+                  fill: '',
+                  stroke: '',
+                  color: '',
+                }),
+              },
+              { immediate: true }
+            )
+          }
+        >
+          Reset
         </button>
       </div>
     );
@@ -818,7 +946,12 @@ export default function App() {
               />
               <div className="preview-pane">
                 <DiagramErrorBoundary>
-                  <DiagramView source={diagram.source} theme={diagram.theme} idPrefix={diagram.id} />
+                  <DiagramView
+                    source={diagram.source}
+                    theme={diagram.theme}
+                    idPrefix={diagram.id}
+                    onNodeClick={(info) => setNodePopover({ diagramId: diagram.id, ...info })}
+                  />
                 </DiagramErrorBoundary>
               </div>
             </div>
@@ -946,6 +1079,7 @@ export default function App() {
           </span>
         )}
       </div>
+      {renderNodePopover()}
     </div>
   );
 }

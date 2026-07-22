@@ -6,7 +6,13 @@ import DiagramCanvas from './DiagramCanvas';
 
 /** Renders a single Mermaid source string to SVG, showing a spinner while
  * parsing and a readable inline error if the source is invalid. */
-export default function DiagramView({ source, theme = 'default', idPrefix = 'diagram', index = 0 }) {
+export default function DiagramView({
+  source,
+  theme = 'default',
+  idPrefix = 'diagram',
+  index = 0,
+  onNodeClick,
+}) {
   const [svg, setSvg] = useState(null);
   const [error, setError] = useState(null);
   const idRef = useRef(safeDiagramId(idPrefix, index));
@@ -45,5 +51,5 @@ export default function DiagramView({ source, theme = 'default', idPrefix = 'dia
     );
   }
 
-  return <DiagramCanvas svg={svg} theme={theme} />;
+  return <DiagramCanvas svg={svg} theme={theme} onNodeClick={onNodeClick} />;
 }

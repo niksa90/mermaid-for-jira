@@ -1,10 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { VidFullScreenOnIcon, VidFullScreenOffIcon } from './icons';
 import { isDarkMermaidTheme } from './mermaid-renderer';
+import { extractClickedNodeId } from './svg-node-id';
 
 const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 8;
+// Below this much pointer movement (in screen px), a pointerdown/pointerup
+// pair counts as a click on whatever was under it rather than a pan-drag —
+// without this, any single-pixel jitter during a click (unavoidable with a
+// mouse) would always read as "the user panned, not clicked" and the
+// click-to-style popover (onNodeClick) would never fire.
+const CLICK_MOVE_THRESHOLD = 6;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -21,7 +28,7 @@ function clamp(value, min, max) {
  * into presentation attributes instead of a <style> block). viewBox is a
  * plain SVG attribute, so it isn't affected.
  */
-export default function DiagramCanvas({ svg, theme = 'default' }) {
+export default function DiagramCanvas({ svg, theme = 'default', onNodeClick }) {
   const wrapRef = useRef(null);
   const containerRef = useRef(null);
   const svgElRef = useRef(null);
@@ -123,6 +130,14 @@ export default function DiagramCanvas({ svg, theme = 'default' }) {
       startClientY: e.clientY,
       startMinX: viewRef.current.minX,
       startMinY: viewRef.current.minY,
+      moved: false,
+      // Captured now, before setPointerCapture below retargets every
+      // subsequent event for this pointer (including pointerup) to
+      // e.currentTarget (the container div) per the Pointer Events spec —
+      // by pointerup time, e.target is no longer the actual SVG element
+      // under the cursor, so the real hit-tested element has to be grabbed
+      // here instead or handleNodeClick would always find nothing.
+      downTarget: e.target,
     };
     setIsPanning(true);
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -132,9 +147,14 @@ export default function DiagramCanvas({ svg, theme = 'default' }) {
     if (!dragRef.current || !svgElRef.current || !viewRef.current) return;
     const rect = svgElRef.current.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
+    const dx = e.clientX - dragRef.current.startClientX;
+    const dy = e.clientY - dragRef.current.startClientY;
+    if (Math.abs(dx) > CLICK_MOVE_THRESHOLD || Math.abs(dy) > CLICK_MOVE_THRESHOLD) {
+      dragRef.current.moved = true;
+    }
     const v = viewRef.current;
-    const dxUnits = ((e.clientX - dragRef.current.startClientX) / rect.width) * v.width;
-    const dyUnits = ((e.clientY - dragRef.current.startClientY) / rect.height) * v.height;
+    const dxUnits = (dx / rect.width) * v.width;
+    const dyUnits = (dy / rect.height) * v.height;
     viewRef.current = {
       ...v,
       minX: dragRef.current.startMinX - dxUnits,
@@ -153,6 +173,38 @@ export default function DiagramCanvas({ svg, theme = 'default' }) {
         // pointer capture already released
       }
     }
+  }
+
+  // Click vs. pan disambiguation: a pointerdown/pointerup pair that never
+  // moved past CLICK_MOVE_THRESHOLD is treated as a click on whatever node
+  // was under the pointer, not a pan-drag. Deliberately not a native `click`
+  // listener — this reuses the same drag-tracking state onPointerMove
+  // already maintains rather than needing a second, parallel mechanism to
+  // detect "did this gesture pan the view".
+  function onPointerUp(e) {
+    const drag = dragRef.current;
+    const wasClick = !!drag && !drag.moved;
+    endDrag(e);
+    if (wasClick) handleNodeClick(drag.downTarget);
+  }
+
+  // Resolves a click to a source node/state/entity id (see svg-node-id.js)
+  // and reports it upward via onNodeClick, which decides whether the
+  // clicked diagram/node actually has a style mechanism to open a popover
+  // for. Silently does nothing if the click landed on an edge, a label, a
+  // cluster wrapper, or a diagram type with no per-element style mechanism
+  // — same "silent no-op for unsupported cases" convention as the rest of
+  // this app's Mermaid-CSP workarounds. Takes the pointerdown-time hit
+  // target explicitly (see onPointerDown's downTarget) rather than reading
+  // it off the pointerup event, since pointer capture has retargeted that
+  // event's own .target to the container by now.
+  function handleNodeClick(downTarget) {
+    if (!onNodeClick || !downTarget?.closest) return;
+    const target = downTarget.closest('.node[id]');
+    if (!target) return;
+    const resolved = extractClickedNodeId(target.getAttribute('id'));
+    if (!resolved) return;
+    onNodeClick({ ...resolved, rect: target.getBoundingClientRect() });
   }
 
   // Fullscreen: a CSS overlay covering the whole Custom UI panel is the
@@ -206,7 +258,7 @@ export default function DiagramCanvas({ svg, theme = 'default' }) {
         className={`diagram-canvas${isPanning ? ' diagram-canvas-panning' : ''}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
+        onPointerUp={onPointerUp}
         onPointerLeave={endDrag}
         onDoubleClick={resetView}
         // eslint-disable-next-line react/no-danger
