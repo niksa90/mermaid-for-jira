@@ -436,6 +436,27 @@ body {
   height: 6px;
 }
 
+/* Icon picker (node-label.js's QUICK_ICONS) — flowchart nodes only, see
+   App.jsx's renderNodePopover. Wraps rather than a fixed single row, since
+   the popover panel is a fixed width but the icon set may grow. */
+.icon-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.icon-btn {
+  width: 28px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.icon-btn-active {
+  background: var(--color-subtle-bg-active);
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
 /* Selection highlight for whichever node/state/entity the style popover is
    currently open on (DiagramCanvas.jsx's selectedNode prop) — a soft glow
    around the shape rather than recoloring its actual stroke, so the node's

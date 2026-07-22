@@ -19,6 +19,7 @@ import { DIAGRAM_TEMPLATES, templateById } from '../../../src/diagram-templates'
 import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
 import { resolveNodeStyleKind } from '../../../src/node-style-kind';
+import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
 // text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
 // reskin. Browsers synthesize bold from this if a diagram happens to want
@@ -655,6 +656,21 @@ export default function App() {
 
     const currentStrokeWidth = current['stroke-width'];
 
+    // Icon-in-label is flowchart-only for now — a state's displayed text
+    // and an ER entity's displayed text don't have an equivalent free-text
+    // label to prepend an icon to without a bigger, diagram-type-specific
+    // rewrite (see node-label.js's own note). Deferred rather than guessed
+    // at; the row simply doesn't render for state/ER nodes.
+    const currentIcon = styleKind.kind === 'flowchart' ? getNodeIcon(diagram.source, nodePopover.nodeId) : '';
+
+    function applyIcon(icon) {
+      updateDiagram(
+        diagram.id,
+        { source: setNodeIcon(diagram.source, nodePopover.nodeId, icon) },
+        { immediate: true }
+      );
+    }
+
     const { rect } = nodePopover;
     const style = {
       left: Math.max(8, rect.left + rect.width / 2),
@@ -674,6 +690,25 @@ export default function App() {
             ×
           </button>
         </div>
+        {styleKind.kind === 'flowchart' && (
+          <div className="node-style-popover-row">
+            <span className="node-style-popover-label">Icon</span>
+            <div className="icon-group" role="group" aria-label="Node icon">
+              {QUICK_ICONS.map((icon) => (
+                <button
+                  key={icon}
+                  type="button"
+                  className={`btn btn-subtle btn-icon icon-btn${currentIcon === icon ? ' icon-btn-active' : ''}`}
+                  aria-label={`Icon: ${icon}`}
+                  aria-pressed={currentIcon === icon}
+                  onClick={() => applyIcon(currentIcon === icon ? '' : icon)}
+                >
+                  {icon}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {renderColorRow('Fill', 'fill', '#ffffff')}
         {renderColorRow('Border', 'stroke', '#333333')}
         <div className="node-style-popover-row">
@@ -699,20 +734,18 @@ export default function App() {
         <button
           type="button"
           className="btn btn-subtle node-style-popover-reset"
-          onClick={() =>
-            updateDiagram(
-              diagram.id,
-              {
-                source: styleKind.upsertStyle(diagram.source, nodePopover.nodeId, {
-                  fill: '',
-                  stroke: '',
-                  'stroke-width': '',
-                  color: '',
-                }),
-              },
-              { immediate: true }
-            )
-          }
+          onClick={() => {
+            let nextSource = styleKind.upsertStyle(diagram.source, nodePopover.nodeId, {
+              fill: '',
+              stroke: '',
+              'stroke-width': '',
+              color: '',
+            });
+            if (styleKind.kind === 'flowchart') {
+              nextSource = setNodeIcon(nextSource, nodePopover.nodeId, '');
+            }
+            updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
+          }}
         >
           Reset node
         </button>
