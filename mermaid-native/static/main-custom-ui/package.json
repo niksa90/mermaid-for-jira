@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "webpack --mode production && cp public/icon.png build/icon.png",
+    "build": "webpack --mode production && cp public/icon.svg build/icon.svg",
     "start": "webpack serve --mode development"
   },
   "dependencies": {

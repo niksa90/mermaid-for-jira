@@ -5,7 +5,7 @@ modules:
       resolver:
         function: resolver
       title: Mermaid Diagrams
-      icon: icon.png
+      icon: icon.svg
 
   function:
     - key: resolver
