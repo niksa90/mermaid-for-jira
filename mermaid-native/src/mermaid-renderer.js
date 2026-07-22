@@ -206,6 +206,32 @@ function inlineSvgStyles(svgString) {
     const svgEl = doc.documentElement;
     if (!svgEl || svgEl.nodeName === 'parsererror') return svgString;
 
+    // Tracks which (element, attribute) pairs THIS function has itself
+    // written, separate from el.hasAttribute() — Mermaid's raw SVG output
+    // already carries baseline fill/stroke on some elements before we ever
+    // touch them (confirmed: sequence-diagram actor <rect>s always come out
+    // as fill="#eaeaea" stroke="#666", regardless of theme — Mermaid's own
+    // markup, not a per-element override). The original version of this
+    // function treated "already has the attribute" as "an intentional
+    // per-element override, leave it alone," which silently discarded the
+    // theme's own `.actor{fill:...}` class rule for every theme including
+    // Mermaid's built-in ones — confirmed via real-browser testing where
+    // actor boxes stayed the exact same light gray no matter which theme
+    // was selected. Gating on "did WE already write this" instead of "does
+    // it already exist" fixes that while preserving the original intent:
+    // a later, less-specific non-important rule still can't clobber a
+    // value an earlier rule in this same pass already set for the same
+    // element/attribute (this is what the !important two-pass logic below
+    // was already built around).
+    const writtenByUs = new WeakMap();
+    function alreadyWrittenByUs(el, attr) {
+      return writtenByUs.get(el)?.has(attr) ?? false;
+    }
+    function markWritten(el, attr) {
+      if (!writtenByUs.has(el)) writtenByUs.set(el, new Set());
+      writtenByUs.get(el).add(attr);
+    }
+
     function applyToSelector(selectorText, declarations, forceOverwrite) {
       for (const selector of selectorText.split(',')) {
         let matches;
@@ -216,9 +242,10 @@ function inlineSvgStyles(svgString) {
         }
         matches.forEach((el) => {
           declarations.forEach(([attr, value]) => {
-            // Don't clobber an attribute the diagram itself set intentionally
-            // (unless this declaration is !important — see below).
-            if (forceOverwrite || !el.hasAttribute(attr)) el.setAttribute(attr, value);
+            if (forceOverwrite || !alreadyWrittenByUs(el, attr)) {
+              el.setAttribute(attr, value);
+              markWritten(el, attr);
+            }
           });
         });
       }
