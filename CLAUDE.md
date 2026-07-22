@@ -104,9 +104,12 @@ anything that risks it before writing code, don't just implement it:
 - `mermaid-native/static/main-custom-ui/` — the actual Custom UI React app
   that runs inside Jira's iframe. **Separate `package.json` and webpack
   build** from the outer `mermaid-native/` package — see Dev loop below.
-  - `src/App.jsx` — issue panel shell: diagram list, add/remove, per-diagram
-    edit/display mode (client-only, not persisted — see GB-seconds note
-    above), debounced autosave with a visible save-status indicator,
+  - `src/App.jsx` — issue panel shell: diagram list, add/remove (now via a
+    template picker — see Known state), per-diagram edit/display mode
+    (client-only, not persisted — see GB-seconds note above), a draggable
+    editor/preview split (client-only, `data-split` attribute + discrete
+    CSS steps rather than an inline `style`, per the CSP constraint below),
+    debounced autosave with a visible save-status indicator,
     conflict-resolution banner, near-size-limit warning, reorder-within-group
     (`moveDiagram`, delegates to `diagram-groups.js`), and the per-node color
     picker toolbar (`renderNodeColorPicker`, delegates to `node-style.js` /
@@ -122,7 +125,8 @@ anything that risks it before writing code, don't just implement it:
     that path from scratch.
 - `mermaid-native/src/DiagramView.jsx`, `DiagramCanvas.jsx`,
   `mermaid-renderer.js`, `ErrorBoundary.jsx`, `diagram-groups.js`,
-  `node-style.js`, `state-style.js` — imported by the Custom UI app via a
+  `node-style.js`, `state-style.js`, `diagram-templates.js`,
+  `CodeMirrorEditor.jsx` — imported by the Custom UI app via a
   relative path (`../../../src/...`) that reaches *up out of*
   `static/main-custom-ui` into the outer package's `src/`. So there are two
   `src/` trees under `mermaid-native/`: the outer one holds the resolver
@@ -132,6 +136,11 @@ anything that risks it before writing code, don't just implement it:
   - `diagram-groups.js` — `buildRenderGroups` (section clustering, moved
     here from `App.jsx` for testability), `moveTargetIndex`/`moveBounds`
     (reorder-within-group logic — see Known state).
+  - `diagram-templates.js` — preset starter source offered by the "Add a
+    diagram" template picker (see Known state).
+  - `CodeMirrorEditor.jsx` — hand-rolled wrapper around a plain CodeMirror
+    6 `EditorView`, replacing the plain `<textarea>` (see Known state —
+    this depends on the `unsafe-inline` styles permission below).
   - `node-style.js` — flowchart node-id parsing and `style NodeId
     fill:...,stroke:...,color:...` read/upsert logic behind the color
     picker.
@@ -192,6 +201,40 @@ app's dark mode now; this is a strict improvement over the previous
 
 Forge Custom UI's CSP blocks inline `<style>` tags and inline `style="..."`
 attributes — both of which Mermaid's theming normally relies on.
+
+**Update (2026-07): `manifest.yml` now declares
+`permissions.content.styles: ['unsafe-inline']`**, added specifically to
+unblock a real CodeMirror 6 editor (see "Known state" below) — CodeMirror
+positions its cursor/selection via inline styles it injects itself, the
+same failure class documented in "Atlaskit components and CSP" above, and
+there's no nonce mechanism Forge exposes to Custom UI apps to satisfy a
+stricter CSP instead. This was a deliberate trade-off, confirmed with the
+project owner: it makes the app ineligible for the "Runs on Atlassian"
+Marketplace badge, which only matters for Marketplace-listed apps — this
+one isn't listed, so it costs nothing today. Residual-risk rationale (for
+if this ever needs re-justifying): diagram source is authored and viewed by
+the same Jira users (no third-party/anonymous authorship), Mermaid still
+runs with `securityLevel: 'strict'` plus its own DOMPurify sanitization
+regardless, and the permission only affects `style-src`, not `script-src`
+— it doesn't reopen inline-script execution. Atlassian's own docs don't
+say whether this permission covers `<style>` tags, `style="..."`
+attributes, or both — that gap is exactly why the CodeMirror integration
+shipped as its own gated, browser-verified step rather than assumed to
+work from the docs alone.
+
+**This does NOT mean the workaround below is dead code.** `inlineSvgStyles()`
+and the `STYLE_PROPS_TO_ATTRS` whitelist are still what every diagram's own
+color/theme rendering goes through — enabling `unsafe-inline` was scoped to
+unblocking the *editor* (a real UI component that needs runtime style
+injection to function at all), not a decision to also rip out Mermaid's
+rendering pipeline, which is working, tested, and has a real history of
+subtle cascade bugs (see the `!important` section below) that a rewrite
+would need to re-earn confidence in from scratch. Removing this pipeline
+in favor of letting Mermaid's own `<style>` block through as-is is a
+plausible *future* simplification, deliberately not bundled into the
+CodeMirror change — it would need its own before/after verification across
+flowchart, state, and the per-node color picker, same as any other change
+to this function.
 
 Current workaround, in `mermaid-native/src/mermaid-renderer.js`:
 `htmlLabels: false` everywhere (forces plain SVG `<text>` instead of
@@ -529,8 +572,9 @@ draft-until-commit treatment — anything read by `buildRenderGroups` is
 unsafe to bind directly to a live-typing input's `onChange`. Pure-logic
 functions (`stable-json.js`, `mermaid-renderer.js`'s `withTheme`/
 `safeDiagramId`/`readableParseError`/`isDarkMermaidTheme`, `diagram-groups.js`,
-`node-style.js`, `state-style.js`) have unit tests under `src/*.test.js`
-(40 tests total as of last review), run via `npm test` (Node's built-in
+`node-style.js`, `state-style.js`, `diagram-templates.js`) have unit tests
+under `src/*.test.js` (45 tests total as of last review), run via `npm test`
+(Node's built-in
 test runner — no test framework dependency) and in CI
 (`.github/workflows/ci.yml`, runs on push/PR, no Atlassian credentials
 needed since it only does `npm test` + `npm run build`, deliberately not
@@ -563,3 +607,67 @@ open) by the user as of 2026-07-21: kanban and treemap-beta render
 correctly (no CSP violations, no duplicated treemap labels), and the
 flowchart/state per-node color-picker regression check passed (the
 `!important`-stripping fix holds under real Jira CSP, not just jsdom).
+
+**Diagram visual modernization (2026-07-22).** A new `'brand'` entry in
+`MERMAID_THEMES` (`mermaid-renderer.js`): Mermaid's `'base'` theme plus a
+hand-picked `themeVariables` palette matched to this app's own chrome
+colors (not read from Atlaskit design tokens — see "Atlaskit components
+and CSP" above for why that path is a dead end), and Inter
+(`@fontsource/inter`, bundled via a new webpack asset rule) as the diagram
+font. `withTheme()` now builds a full init-directive object for `'brand'`
+instead of a bare theme-name string — confirmed via a jsdom + real-mermaid
+spike that `fontFamily` has to sit at the init directive's **top level**,
+not nested inside `themeVariables`, or Mermaid silently ignores it with no
+error. **Known gap, jsdom-confirmed**: the brand theme's `actorBkg`/
+`actorBorder` variables are unconfirmed for sequence-diagram actor boxes —
+Mermaid bakes those as literal `fill`/`stroke` attributes directly, not
+through the `<style>` block, bypassing `themeVariables` entirely for that
+element type. Flowchart node coloring is confirmed working. A new
+`applyModernPolish()` step (runs after `inlineSvgStyles()`) rounds node/
+actor corners and thickens edge strokes via real SVG presentation
+attributes (`rx`/`ry`/`stroke-width`) — not CSS, so no `STYLE_PROPS_TO_ATTRS`
+change was needed; verified against real mermaid v11.16.0 output that
+state diagrams use a `.transition` edge class, distinct from flowchart's
+`.edgePath`/`.flowchart-link`. Deployed and forge-installed on the
+connected test site; not yet browser-confirmed by the user.
+
+**Diagram templates (2026-07-22).** New `diagram-templates.js`: preset
+starter source for Flowchart, Sequence, State, Class, ER, Gantt, Pie,
+Kanban, and C4 Context, offered via a picker next to "Add a diagram"
+(defaults to the previous blank-flowchart behavior). Each template's exact
+source was independently confirmed via the same jsdom + real-mermaid
+technique to render with no `<foreignObject>`/embedded-HTML leak under
+this app's `htmlLabels: false` config. Mindmap and architecture-beta are
+deliberately excluded — a jsdom limitation (its canvas-based text-
+measurement layout never completed under jsdom, a jsdom gap rather than a
+confirmed CSP problem) blocked confirming mindmap, and architecture-beta
+was never checked at all. Don't add either as a template without running
+the same render-and-inspect check first.
+
+**CodeMirror 6 editor — Phase 0 spike, gated on real-browser confirmation
+(2026-07-22).** Monaco was ruled out without prototyping it: its language-
+service workers need `blob:`-based script loading, which Atlassian staff
+have confirmed is an unsupported `script-src` CSP scheme on Forge with no
+workaround — a platform limitation the `unsafe-inline` styles permission
+above doesn't touch (that's a separate CSP axis, `style-src`). CodeMirror 6
+doesn't need workers for its core editing/highlighting, so it was the
+one actually prototyped. `CodeMirrorEditor.jsx` (outer `src/`, same
+shared-component convention as `Spinner.jsx`/`icons.jsx`) is a thin
+hand-rolled wrapper around a plain CodeMirror `EditorView` — not
+`@uiw/react-codemirror` — using `basicSetup` only (line numbers, history,
+bracket matching, built-in Ctrl+F search); no Mermaid grammar/syntax
+highlighting yet, that's a deliberate fast-follow once this baseline is
+confirmed. Lazy-loaded the same way `mermaid-renderer.js` lazy-loads
+`mermaid` (`loadCodeMirror()`, mirroring `loadMermaid()`) since it's only
+needed once a diagram is actually being edited — bundled eagerly it nearly
+tripled the main entrypoint (205KB→579KB); lazy, the main entrypoint stays
+at 234KB with CodeMirror as its own 382KB chunk loaded on first edit.
+Replaces the plain `<textarea>` in `App.jsx`, preserving the existing
+debounced-save/`onBlur`-flush contract unchanged. **This is explicitly a
+stop-and-check point, not a finished feature**: deployed and forge-installed
+on the connected test site, but not yet confirmed in a real browser — the
+whole point of shipping it this small is that if the `unsafe-inline`
+permission turns out not to cover what CodeMirror needs (Atlassian's docs
+don't say), only this one small piece needs reworking, not a full
+CodeMirror + Mermaid-grammar + polish feature built on an unverified
+foundation.

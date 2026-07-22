@@ -41,6 +41,11 @@ rendered client-side in the browser.
 - [mermaid-native/src/mermaid-renderer.js](mermaid-native/src/mermaid-renderer.js):
   client-side Mermaid rendering and the CSP workaround that converts
   Mermaid's CSS/`<style>` output into inline SVG presentation attributes.
+- [mermaid-native/src/diagram-templates.js](mermaid-native/src/diagram-templates.js):
+  preset starter source for each diagram type offered when adding a new
+  diagram.
+- [mermaid-native/src/CodeMirrorEditor.jsx](mermaid-native/src/CodeMirrorEditor.jsx):
+  the CodeMirror 6 source editor, replacing a plain textarea.
 
 ## Optional
 

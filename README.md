@@ -44,21 +44,24 @@ just "currently free."
 
 ## Features
 
-- **Multiple diagrams per issue**, each with its own label, source, and style
-- **Live preview** while editing, with readable parse-error messages instead
-  of a blank panel
-- **Per-diagram style picker** (Mermaid's built-in themes: Default, Neutral,
-  Forest, Dark) — new diagrams default to Dark automatically when Jira
-  itself is in dark mode
+- **Multiple diagrams per issue**, each with its own name, source, and style
+- **Starter templates** for Flowchart, Sequence, State, Class, ER, Gantt,
+  Pie, Kanban, and C4 Context when adding a new diagram, instead of an
+  empty document
+- **Live preview** while editing, with a resizable split between editor and
+  preview, and readable parse-error messages instead of a blank panel
+- **Per-diagram style picker**, including Mermaid's built-in themes
+  (Default, Neutral, Forest, Dark) plus a "Brand" theme tuned to sit
+  alongside this app's own UI colors and typography — new diagrams default
+  to Dark automatically when Jira itself is in dark mode
 - **Per-node color picker**, for both flowcharts and state diagrams — pick a
   node/state and set its fill, border, and text color without hand-typing
   Mermaid's `style`/`classDef` syntax. Sequence, ER, pie, and gantt diagrams
   don't get this picker: Mermaid itself has no per-element color mechanism
   for them, not a gap in this app
-- **Dark mode**, following Jira's own light/dark/auto preference — one known
-  gap: two small Atlaskit-driven elements (the loading spinner and
-  warning/error banners) don't follow it, a deliberate tradeoff (see
-  `CLAUDE.md`) rather than an oversight
+- **Dark mode**, following Jira's own light/dark/auto preference — every
+  visible element, including the loading spinner and warning/error banners,
+  follows it
 - **Pan, zoom, and fullscreen** on rendered diagrams — mouse wheel to zoom,
   drag to pan, on-canvas controls, and a fullscreen toggle. A diagram's own
   background (in the preview pane, inline, and fullscreen) always matches
@@ -249,16 +252,16 @@ reasons above. CI (`.github/workflows/ci.yml`) runs `npm test` and
 
 This is an actively-developed project, not a polished 1.0. Current gaps:
 
-- Two small Atlaskit-driven UI elements (the loading spinner and
-  warning/error banners) don't follow Jira's dark mode — pinning them to it
-  would mean depending on Atlaskit's undocumented internal CSS variable
-  names rather than a supported API, judged not worth the fragility for two
-  transient, situational elements. Everything else (buttons, inputs, card
-  chrome, diagram surfaces) does follow it
 - The per-node color picker only appears for flowcharts and state diagrams
   — Mermaid itself has no per-node/participant color mechanism for
   sequence, ER, pie, or gantt diagrams (verified against the real parser,
   not assumed), so there's nothing to build a picker around for those types
+- Templates don't yet cover Mindmap or Architecture (`architecture-beta`) —
+  not ruled out, just not yet confirmed to render cleanly under this app's
+  CSP constraints (see `CLAUDE.md`)
+- The source editor is a real CodeMirror 6 editor (line numbers, bracket
+  matching, Ctrl+F search) rather than a plain textarea, but doesn't yet
+  have Mermaid-specific syntax highlighting — that's a planned fast-follow
 - Only pure-logic unit tests — no UI/rendering or resolver-integration tests
 - All diagrams for an issue share a single Jira entity property, which has a
   32 KB size limit (the app warns you as you approach it, and blocks a save
