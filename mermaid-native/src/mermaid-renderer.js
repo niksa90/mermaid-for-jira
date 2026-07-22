@@ -137,7 +137,7 @@ export async function renderMermaid(id, source) {
     throw new Error(readableParseError(err));
   }
   const { svg } = await mermaid.render(id, trimmed);
-  return applyModernPolish(inlineSvgStyles(svg));
+  return applyModernPolish(inlineSvgStyles(svg), id);
 }
 
 // CSS properties that have a direct SVG presentation-attribute equivalent.
@@ -294,11 +294,18 @@ function inlineSvgStyles(svgString) {
 }
 
 /**
- * Rounds node/actor corners and gives edges a slightly heavier stroke —
- * Mermaid's default shapes otherwise render sharp-cornered with a 1px
- * hairline stroke, which reads as dated next to Jira's own rounded,
- * low-contrast UI chrome. Applied as real SVG presentation attributes
- * (rx/ry/stroke-width), the same mechanism inlineSvgStyles() uses for
+ * Rounds node/actor corners, gives edges a heavier stroke, and adds a
+ * subtle drop shadow to node shapes — Mermaid's default shapes otherwise
+ * render sharp-cornered with a 1px hairline stroke and no depth, which
+ * reads as dated next to Jira's own rounded, "card-like" UI chrome. An
+ * earlier version of this used a smaller rx (6) and stroke-width (1.5)
+ * with no shadow at all — too subtle a delta to register as "different"
+ * at a glance, per direct user feedback, so both were increased and a
+ * shadow was added specifically to make the change legible without
+ * requiring the viewer to pick a non-default theme first.
+ *
+ * Applied as real SVG presentation attributes/elements (rx/ry/
+ * stroke-width/filter), the same mechanism inlineSvgStyles() uses for
  * colors — not CSS, so it isn't blocked by Forge's CSP and doesn't need
  * STYLE_PROPS_TO_ATTRS extended. Runs after inlineSvgStyles() so it only
  * ever adjusts attributes already baked onto the final elements, never
@@ -313,17 +320,46 @@ function inlineSvgStyles(svgString) {
  * if it matches nothing (e.g. a diagram type with different class names),
  * so this is best-effort polish, not a correctness-critical pass; verify
  * visually across diagram types after changing these selectors.
+ *
+ * `idPrefix` (the same per-diagram id renderMermaid already generates via
+ * safeDiagramId) namespaces the injected <filter> id — multiple diagrams
+ * can be on the same page at once, each with its own SVG root, and a bare
+ * "modern-shadow" id would collide across them.
  */
-function applyModernPolish(svgString) {
+function applyModernPolish(svgString, idPrefix) {
   try {
     const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
     const svgEl = doc.documentElement;
     if (!svgEl || svgEl.nodeName === 'parsererror') return svgString;
+    const svgNs = 'http://www.w3.org/2000/svg';
+
+    const filterId = `${idPrefix}-modern-shadow`;
+    const filter = doc.createElementNS(svgNs, 'filter');
+    filter.setAttribute('id', filterId);
+    filter.setAttribute('x', '-30%');
+    filter.setAttribute('y', '-30%');
+    filter.setAttribute('width', '160%');
+    filter.setAttribute('height', '160%');
+    const feDropShadow = doc.createElementNS(svgNs, 'feDropShadow');
+    feDropShadow.setAttribute('dx', '0');
+    feDropShadow.setAttribute('dy', '1');
+    feDropShadow.setAttribute('stdDeviation', '1.5');
+    feDropShadow.setAttribute('flood-opacity', '0.18');
+    filter.appendChild(feDropShadow);
+    let defs = svgEl.querySelector('defs');
+    if (!defs) {
+      defs = doc.createElementNS(svgNs, 'defs');
+      svgEl.insertBefore(defs, svgEl.firstChild);
+    }
+    defs.appendChild(filter);
 
     doc.querySelectorAll('.node rect, .node polygon, .actor').forEach((el) => {
       if (el.tagName.toLowerCase() === 'rect' && !el.hasAttribute('rx')) {
-        el.setAttribute('rx', '6');
-        el.setAttribute('ry', '6');
+        el.setAttribute('rx', '8');
+        el.setAttribute('ry', '8');
+      }
+      if (!el.hasAttribute('filter')) {
+        el.setAttribute('filter', `url(#${filterId})`);
       }
     });
 
@@ -336,7 +372,7 @@ function applyModernPolish(svgString) {
         '.flowchart-link, .edgePath path, .messageLine0, .messageLine1, .transition'
       )
       .forEach((el) => {
-        el.setAttribute('stroke-width', '1.5');
+        el.setAttribute('stroke-width', '2');
       });
 
     return new XMLSerializer().serializeToString(svgEl);

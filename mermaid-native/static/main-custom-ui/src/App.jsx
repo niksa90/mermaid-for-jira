@@ -365,7 +365,12 @@ export default function App() {
   }
 
   function addDiagram() {
-    const diagram = newDiagram(effectiveDark ? 'dark' : 'default');
+    // 'brand' rather than 'default': per direct user feedback, an
+    // opt-in-only theme choice buried in a dropdown wasn't actually making
+    // new diagrams look any different day-to-day. Still only affects
+    // diagrams that don't exist yet — no auto-switching of an existing
+    // diagram's theme, same rule as the dark/default choice below.
+    const diagram = newDiagram(effectiveDark ? 'dark' : 'brand');
     setModes((prev) => ({ ...prev, [diagram.id]: 'edit' }));
     persist([...latestDiagramsRef.current, diagram], { immediate: true });
   }
