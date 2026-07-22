@@ -86,6 +86,15 @@ test('upsertStateStyle removes both lines once every channel is cleared', () => 
   assert.equal(next, 'stateDiagram-v2\n[*] --> A');
 });
 
+test('upsertStateStyle supports the stroke-width (border width) channel', () => {
+  const source = 'stateDiagram-v2\n[*] --> A';
+  const next = upsertStateStyle(source, 'A', { 'stroke-width': '6' });
+  assert.equal(
+    next,
+    'stateDiagram-v2\n[*] --> A\nclassDef nodeStyle_A stroke-width:6\nclass A nodeStyle_A'
+  );
+});
+
 // The generated classDef/class syntax's validity against the real Mermaid
 // parser was checked manually (`mermaid` is only a dependency of the inner
 // static/main-custom-ui package, not this outer one `npm test` runs from,

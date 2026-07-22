@@ -76,3 +76,14 @@ test('upsertNodeStyle clearing a channel that was never set on an unstyled node 
   const next = upsertNodeStyle(source, 'A', { fill: '', stroke: '', color: '' });
   assert.equal(next, source);
 });
+
+test('upsertNodeStyle supports the stroke-width (border width) channel, ordered between stroke and color', () => {
+  const source = 'flowchart TD\n  A[Start]';
+  const next = upsertNodeStyle(source, 'A', { stroke: '#333', 'stroke-width': '6', color: '#fff' });
+  assert.equal(next, 'flowchart TD\n  A[Start]\nstyle A stroke:#333,stroke-width:6,color:#fff');
+});
+
+test('parseNodeStyles reads back a stroke-width directive', () => {
+  const source = 'flowchart TD\n  A[Start]\n  style A stroke-width:4';
+  assert.deepEqual(parseNodeStyles(source), { A: { 'stroke-width': '4' } });
+});

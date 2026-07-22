@@ -13,7 +13,7 @@
 
 const RESERVED_WORDS = new Set(['erDiagram', 'classDef', 'class']);
 
-const ER_STYLE_PROPS = ['fill', 'stroke', 'color'];
+const ER_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isERDiagramSource(source) {
   const firstContentLine = (source || '')

@@ -49,6 +49,29 @@ const UNDO_TIMEOUT_MS = 8000;
 const MAX_PROPERTY_BYTES = 32768;
 const SIZE_WARNING_RATIO = 0.85;
 
+// Quick-pick swatches for the node style popover's fill/border/text color
+// rows — a curated palette (Jira/brand-adjacent hues plus ink/paper
+// neutrals) rather than opening straight to the OS color picker for every
+// pick, per direct user feedback that raw <input type="color"> swatches
+// read as "paint," not a design tool. The native color input is still kept
+// alongside these as a "custom" escape hatch for anything outside the set.
+const QUICK_SWATCHES = [
+  '#0c66e4', // blue
+  '#00875a', // green
+  '#de350b', // red
+  '#6554c0', // purple
+  '#ff991f', // orange
+  '#172b4d', // ink
+  '#ffffff', // paper
+  '#dfe1e6', // grey
+];
+
+// Discrete border-width presets for the popover's segmented control —
+// direct user request for Miro-style thickness buttons instead of a
+// continuous slider. Written to diagram.source unitless (e.g. "4", not
+// "4px"), matching how applyModernPolish's own default ("3") is written.
+const BORDER_WIDTHS = [1, 2, 4, 6];
+
 function payloadSizeBytes(diagramsArr) {
   return new TextEncoder().encode(JSON.stringify({ diagrams: diagramsArr })).length;
 }
@@ -131,18 +154,17 @@ export default function App() {
   // to the blank-flowchart default after each add rather than persisting
   // the last pick, so a forgotten selection can't surprise a later add.
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
-  // Which node the per-node color picker is currently pointed at, per
-  // diagram — a view preference (which node's colors you're looking at),
-  // not diagram content, so client-only like modes/collapsed above.
-  const [selectedNode, setSelectedNode] = useState({});
   // The click-on-the-bubble style popover: which diagram/node it's anchored
   // to and where, or null when closed. Only one can be open at a time
-  // (global, not per-diagram, unlike selectedNode/modes/collapsed above) —
-  // `rect` is a plain snapshot of the clicked node's getBoundingClientRect()
-  // taken once at click time, not re-measured live on pan/zoom/scroll (see
-  // the click-to-style-plan project memory: re-tracking continuously was
-  // judged a rabbit hole with little payoff, so the popover just closes on
-  // the next outside click/Escape instead of following the node).
+  // (global, not per-diagram, unlike modes/collapsed above) — `rect` is a
+  // plain snapshot of the clicked node's getBoundingClientRect() taken once
+  // at click time, not re-measured live on pan/zoom/scroll (see the
+  // click-to-style-plan project memory: re-tracking continuously was judged
+  // a rabbit hole with little payoff, so the popover just closes on the
+  // next outside click/Escape instead of following the node). This is now
+  // the *only* way to reach per-node styling — the older docked
+  // dropdown+swatches toolbar was removed per direct user feedback once
+  // this shipped, rather than kept as a parallel entry point.
   const [nodePopover, setNodePopover] = useState(null);
   const nodePopoverRef = useRef(null);
   // Whether the panel is effectively rendering in dark mode (see
@@ -535,142 +557,15 @@ export default function App() {
   const nearSizeLimit =
     saveState !== 'too-large' && sizeBytes > MAX_PROPERTY_BYTES * SIZE_WARNING_RATIO;
 
-  // Per-node fill/border/text color picker, shown in edit mode for
-  // flowchart, state, and ER diagrams with at least one node/state/entity
-  // the parser could identify (see node-style-kind.js and the
-  // node-style.js/state-style.js/er-style.js modules it dispatches to).
-  // Other diagram types (sequence, pie, gantt, ...) don't get this picker at
-  // all — Mermaid itself has no per-element style mechanism for them,
-  // verified against the real parser rather than assumed, not just a gap in
-  // this code.
-  //
-  // This is one of two entry points into the same underlying styling data —
-  // see the click-on-the-bubble popover (renderNodePopover) below, which
-  // reads/writes through the exact same resolveNodeStyleKind() dispatch.
-  function renderNodeColorPicker(diagram) {
-    const styleKind = resolveNodeStyleKind(diagram.source);
-    if (!styleKind) return null;
-    const nodeIds = styleKind.parseIds(diagram.source);
-    const parseStyles = styleKind.parseStyles;
-    const upsertStyle = styleKind.upsertStyle;
-    if (nodeIds.length === 0) return null;
-
-    const currentNode =
-      selectedNode[diagram.id] && nodeIds.includes(selectedNode[diagram.id])
-        ? selectedNode[diagram.id]
-        : nodeIds[0];
-    const current = parseStyles(diagram.source)[currentNode] || {};
-
-    // Not { immediate: true }: a native color <input> fires onChange
-    // continuously while its picker is being dragged (many times a second,
-    // not once on release), same as continuous typing in the source
-    // textarea — so this goes through the debounced path and flushes on
-    // blur, instead of firing a separate immediate save per drag tick.
-    // Racing that many concurrent immediate saves against each other used
-    // to trip the app's own optimistic-concurrency check (each save reads
-    // baseSnapshotRef before any of the earlier in-flight ones had
-    // completed), surfacing as a spurious "someone else changed this"
-    // conflict against the app's own rapid-fire edits.
-    //
-    // That debounce only ever throttled the network save, though — every
-    // onChange tick still updated `diagram.source` immediately, and
-    // DiagramView re-renders (a full mermaid.render()) any time `source`
-    // changes. A color drag was therefore triggering a full Mermaid
-    // re-render on every single tick with nothing capping the rate, which
-    // was enough to lock up the whole machine on a real diagram (see
-    // NODE_COLOR_RENDER_DEBOUNCE_MS above). scheduleNodeColorUpdate throttles
-    // the actual `diagram.source` commit the same way; only the last color
-    // value in a burst of drag ticks ends up applied.
-    function applyNodeStyle(prop, value) {
-      scheduleNodeColorUpdate(() => {
-        updateDiagram(diagram.id, {
-          source: upsertStyle(diagram.source, currentNode, { [prop]: value }),
-        });
-      });
-    }
-
-    function flushNodeColorAndSave() {
-      flushNodeColorUpdate();
-      flushSave();
-    }
-
-    return (
-      <div className="node-style-toolbar">
-        <label className="style-picker-label" htmlFor={`node-${diagram.id}`}>
-          Node
-        </label>
-        <select
-          id={`node-${diagram.id}`}
-          className="select-input"
-          value={currentNode}
-          onChange={(e) => setSelectedNode((prev) => ({ ...prev, [diagram.id]: e.target.value }))}
-        >
-          {nodeIds.map((id) => (
-            <option key={id} value={id}>
-              {id}
-            </option>
-          ))}
-        </select>
-        <label className="node-color-label">
-          Fill
-          <input
-            type="color"
-            className="node-color-input"
-            value={current.fill || '#ffffff'}
-            onChange={(e) => applyNodeStyle('fill', e.target.value)}
-            onBlur={flushNodeColorAndSave}
-          />
-        </label>
-        <label className="node-color-label">
-          Border
-          <input
-            type="color"
-            className="node-color-input"
-            value={current.stroke || '#333333'}
-            onChange={(e) => applyNodeStyle('stroke', e.target.value)}
-            onBlur={flushNodeColorAndSave}
-          />
-        </label>
-        <label className="node-color-label">
-          Text
-          <input
-            type="color"
-            className="node-color-input"
-            value={current.color || '#000000'}
-            onChange={(e) => applyNodeStyle('color', e.target.value)}
-            onBlur={flushNodeColorAndSave}
-          />
-        </label>
-        <button
-          type="button"
-          className="btn btn-subtle"
-          onClick={() =>
-            updateDiagram(
-              diagram.id,
-              {
-                source: upsertStyle(diagram.source, currentNode, {
-                  fill: '',
-                  stroke: '',
-                  color: '',
-                }),
-              },
-              { immediate: true }
-            )
-          }
-        >
-          Reset node
-        </button>
-      </div>
-    );
-  }
-
-  // The click-on-the-bubble popover: a second entry point into the exact
-  // same per-node style data as renderNodeColorPicker above (both go
-  // through resolveNodeStyleKind), anchored to wherever the user clicked
-  // instead of living in the docked toolbar. Coexists with the dropdown
-  // deliberately rather than replacing it — a fallback for nodes that are
-  // hard to click precisely or currently panned off-screen (see the
-  // click-to-style-plan project memory).
+  // The click-on-the-bubble style popover: the only entry point into
+  // per-node/state/entity styling (flowchart/state/ER — see
+  // node-style-kind.js; other diagram types have no per-element style
+  // mechanism in Mermaid at all, verified against the real parser). An
+  // earlier version of this app had a second, docked dropdown+swatches
+  // toolbar for the same data; it was removed per direct user feedback
+  // once this popover shipped, rather than kept as a parallel entry point —
+  // in-diagram click-to-style was judged to fully replace it, not
+  // supplement it.
   //
   // Positioned once from the rect DiagramCanvas captured at click time
   // (position: fixed + inline left/top — permitted by manifest.yml's
@@ -692,10 +587,23 @@ export default function App() {
     if (!nodeIds.includes(nodePopover.nodeId)) return null;
     const current = styleKind.parseStyles(diagram.source)[nodePopover.nodeId] || {};
 
-    // Same continuous-input debounce as renderNodeColorPicker's color
-    // inputs — see NODE_COLOR_RENDER_DEBOUNCE_MS above for why this can't
-    // be a plain immediate updateDiagram call.
-    function applyPopoverStyle(prop, value) {
+    // Discrete pick (swatch click or border-width preset): applied and
+    // saved right away, same as the theme/section pickers elsewhere in this
+    // app — there's no drag/continuous gesture here to debounce.
+    function applyPopoverStyleImmediate(prop, value) {
+      updateDiagram(
+        diagram.id,
+        { source: styleKind.upsertStyle(diagram.source, nodePopover.nodeId, { [prop]: value }) },
+        { immediate: true }
+      );
+    }
+
+    // Continuous drag (the native color input's onChange fires tens of
+    // times a second while dragging — see NODE_COLOR_RENDER_DEBOUNCE_MS
+    // above): can't be a plain immediate updateDiagram call, or a color
+    // drag on the custom-color fallback would repeat the render/save race
+    // that constant documents.
+    function applyPopoverStyleDrag(prop, value) {
       scheduleNodeColorUpdate(() => {
         updateDiagram(diagram.id, {
           source: styleKind.upsertStyle(diagram.source, nodePopover.nodeId, { [prop]: value }),
@@ -707,6 +615,45 @@ export default function App() {
       flushNodeColorUpdate();
       flushSave();
     }
+
+    // One row per channel: a curated swatch palette (QUICK_SWATCHES) as the
+    // primary, one-click way to pick a color — plus the native color input
+    // kept as a small "custom" fallback for anything outside that set. Per
+    // direct user feedback that raw color-picker swatches alone read as
+    // "paint," not a design tool.
+    function renderColorRow(label, prop, fallback) {
+      const value = (current[prop] || fallback).toLowerCase();
+      return (
+        <div className="node-style-popover-row">
+          <span className="node-style-popover-label">{label}</span>
+          <div className="swatch-group" role="group" aria-label={`${label} color`}>
+            {QUICK_SWATCHES.map((hex) => (
+              <button
+                key={hex}
+                type="button"
+                className={`swatch-btn${value === hex ? ' swatch-btn-active' : ''}`}
+                style={{ backgroundColor: hex }}
+                title={hex}
+                aria-label={`${label}: ${hex}`}
+                aria-pressed={value === hex}
+                onClick={() => applyPopoverStyleImmediate(prop, hex)}
+              />
+            ))}
+            <input
+              type="color"
+              className="node-color-input swatch-custom-input"
+              title="Custom color"
+              aria-label={`${label}: custom color`}
+              value={current[prop] || fallback}
+              onChange={(e) => applyPopoverStyleDrag(prop, e.target.value)}
+              onBlur={flushPopoverAndSave}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    const currentStrokeWidth = current['stroke-width'];
 
     const { rect } = nodePopover;
     const style = {
@@ -727,39 +674,31 @@ export default function App() {
             ×
           </button>
         </div>
-        <label className="node-color-label">
-          Fill
-          <input
-            type="color"
-            className="node-color-input"
-            value={current.fill || '#ffffff'}
-            onChange={(e) => applyPopoverStyle('fill', e.target.value)}
-            onBlur={flushPopoverAndSave}
-          />
-        </label>
-        <label className="node-color-label">
-          Border
-          <input
-            type="color"
-            className="node-color-input"
-            value={current.stroke || '#333333'}
-            onChange={(e) => applyPopoverStyle('stroke', e.target.value)}
-            onBlur={flushPopoverAndSave}
-          />
-        </label>
-        <label className="node-color-label">
-          Text
-          <input
-            type="color"
-            className="node-color-input"
-            value={current.color || '#000000'}
-            onChange={(e) => applyPopoverStyle('color', e.target.value)}
-            onBlur={flushPopoverAndSave}
-          />
-        </label>
+        {renderColorRow('Fill', 'fill', '#ffffff')}
+        {renderColorRow('Border', 'stroke', '#333333')}
+        <div className="node-style-popover-row">
+          <span className="node-style-popover-label">Border width</span>
+          <div className="border-width-group" role="group" aria-label="Border width">
+            {BORDER_WIDTHS.map((px) => (
+              <button
+                key={px}
+                type="button"
+                className={`btn btn-subtle btn-icon border-width-btn${
+                  currentStrokeWidth === String(px) ? ' border-width-btn-active' : ''
+                }`}
+                aria-label={`${px}px border`}
+                aria-pressed={currentStrokeWidth === String(px)}
+                onClick={() => applyPopoverStyleImmediate('stroke-width', String(px))}
+              >
+                <span className="border-width-preview" data-width={px} />
+              </button>
+            ))}
+          </div>
+        </div>
+        {renderColorRow('Text', 'color', '#000000')}
         <button
           type="button"
-          className="btn btn-subtle"
+          className="btn btn-subtle node-style-popover-reset"
           onClick={() =>
             updateDiagram(
               diagram.id,
@@ -767,6 +706,7 @@ export default function App() {
                 source: styleKind.upsertStyle(diagram.source, nodePopover.nodeId, {
                   fill: '',
                   stroke: '',
+                  'stroke-width': '',
                   color: '',
                 }),
               },
@@ -774,7 +714,7 @@ export default function App() {
             )
           }
         >
-          Reset
+          Reset node
         </button>
       </div>
     );
@@ -919,7 +859,6 @@ export default function App() {
                 placeholder="None"
               />
             </div>
-            {renderNodeColorPicker(diagram)}
             <div className="editor-split" data-split={splitPercent}>
               <div className="editor-pane">
                 <CodeMirrorEditor
@@ -951,6 +890,11 @@ export default function App() {
                     theme={diagram.theme}
                     idPrefix={diagram.id}
                     onNodeClick={(info) => setNodePopover({ diagramId: diagram.id, ...info })}
+                    selectedNode={
+                      nodePopover && nodePopover.diagramId === diagram.id
+                        ? { kind: nodePopover.kind, nodeId: nodePopover.nodeId }
+                        : null
+                    }
                   />
                 </DiagramErrorBoundary>
               </div>

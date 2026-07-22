@@ -28,7 +28,7 @@ function clamp(value, min, max) {
  * into presentation attributes instead of a <style> block). viewBox is a
  * plain SVG attribute, so it isn't affected.
  */
-export default function DiagramCanvas({ svg, theme = 'default', onNodeClick }) {
+export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, selectedNode }) {
   const wrapRef = useRef(null);
   const containerRef = useRef(null);
   const svgElRef = useRef(null);
@@ -59,6 +59,32 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick }) {
     svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     applyView();
   }, [svg]);
+
+  // Visual selection highlight for the click-to-style popover — a Miro-like
+  // "this is what you're editing" affordance the raw node-color-picker
+  // dropdown never had. Re-derived from scratch after every render (keyed
+  // on both `svg` and `selectedNode`) rather than a one-time DOM mutation,
+  // because `dangerouslySetInnerHTML` fully replaces the SVG's DOM every
+  // time `svg` changes (e.g. after a color/border-width edit), which would
+  // otherwise silently drop the highlight class on the very next edit to
+  // the node the user is actively styling. Matches the clicked node back up
+  // via the same marker-based id scheme handleNodeClick uses, not a live
+  // element reference (there isn't one to keep across a full innerHTML
+  // replacement).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.querySelectorAll('.node-style-selected').forEach((el) => {
+      el.classList.remove('node-style-selected');
+    });
+    if (!selectedNode) return;
+    container.querySelectorAll('.node[id]').forEach((el) => {
+      const resolved = extractClickedNodeId(el.getAttribute('id'));
+      if (resolved && resolved.kind === selectedNode.kind && resolved.nodeId === selectedNode.nodeId) {
+        el.classList.add('node-style-selected');
+      }
+    });
+  }, [svg, selectedNode]);
 
   function applyView() {
     const svgEl = svgElRef.current;

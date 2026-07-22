@@ -253,22 +253,6 @@ body {
   flex: none;
 }
 
-.node-style-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.node-color-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text-subtle);
-}
-
 .node-color-input {
   appearance: none;
   -webkit-appearance: none;
@@ -297,34 +281,41 @@ body {
    needed. Everything else here is a static class, matching every other
    piece of chrome in this app. `transform: translateX(-50%)` centers the
    popover under the clicked node horizontally without needing JS to know
-   its own width ahead of time. */
+   its own width ahead of time.
+
+   A small vertical inspector panel (one labeled row per control), not a
+   single-line toolbar — reads closer to a design tool's selection panel
+   (Miro/Figma-style) than a flat row of raw inputs, per direct user
+   feedback that the original row-of-swatches version read as "paint." */
 .node-style-popover {
   position: fixed;
   z-index: 1100;
   transform: translateX(-50%);
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  padding: 8px 10px;
+  width: 208px;
+  padding: 10px;
   background: var(--color-page-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 16px rgba(9, 30, 66, 0.2), 0 0 1px rgba(9, 30, 66, 0.3);
+  box-shadow: 0 8px 20px rgba(9, 30, 66, 0.25), 0 0 1px rgba(9, 30, 66, 0.3);
 }
 
 .node-style-popover-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
-  padding-right: 4px;
-  border-right: 1px solid var(--color-border);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .node-style-popover-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text);
-  max-width: 120px;
+  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -336,6 +327,122 @@ body {
   padding: 0;
   font-size: 15px;
   line-height: 1;
+}
+
+.node-style-popover-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.node-style-popover-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-subtle);
+}
+
+.node-style-popover-reset {
+  margin-top: 2px;
+  align-self: flex-start;
+}
+
+/* Curated quick-pick swatches (QUICK_SWATCHES) plus one native color input
+   kept as the "custom" fallback — see renderColorRow in App.jsx. */
+.swatch-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(9, 30, 66, 0.15);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatch-btn:hover {
+  transform: scale(1.12);
+}
+
+.swatch-btn-active {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.swatch-custom-input {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.swatch-custom-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.swatch-custom-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
+/* Border-width segmented control: a set of discrete presets (BORDER_WIDTHS)
+   rendered as thickness previews, not a continuous slider — per direct user
+   request for Miro-style border-width buttons. */
+.border-width-group {
+  display: flex;
+  gap: 4px;
+}
+
+.border-width-btn {
+  width: 36px;
+}
+
+.border-width-btn-active {
+  background: var(--color-subtle-bg-active);
+}
+
+.border-width-preview {
+  display: block;
+  width: 20px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.border-width-preview[data-width='1'] {
+  height: 1px;
+}
+.border-width-preview[data-width='2'] {
+  height: 2px;
+}
+.border-width-preview[data-width='4'] {
+  height: 4px;
+}
+.border-width-preview[data-width='6'] {
+  height: 6px;
+}
+
+/* Selection highlight for whichever node/state/entity the style popover is
+   currently open on (DiagramCanvas.jsx's selectedNode prop) — a soft glow
+   around the shape rather than recoloring its actual stroke, so the node's
+   own configured border color stays visible while it's selected. A
+   drop-shadow filter (not `outline`/`box-shadow`, neither of which follows
+   an arbitrary SVG shape's outline) — SVG presentation attributes like the
+   node's own `stroke` lose to any real stylesheet rule, so this doesn't
+   need `!important` to show. */
+.node-style-selected rect,
+.node-style-selected polygon,
+.node-style-selected circle,
+.node-style-selected ellipse,
+.node-style-selected path {
+  filter: drop-shadow(0 0 2px var(--color-primary)) drop-shadow(0 0 7px var(--color-primary));
 }
 
 .editor-split {

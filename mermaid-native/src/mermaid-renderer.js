@@ -167,6 +167,14 @@ const STYLE_PROPS_TO_ATTRS = {
   'dominant-baseline': 'dominant-baseline',
 };
 
+// Temporary marker set by inlineSvgStyles() on any element that received an
+// explicit per-node/state/entity `stroke-width` (the border-width picker
+// control), so applyModernPolish() — which otherwise unconditionally bumps
+// every node's stroke-width to a fixed value — knows to leave that element
+// alone instead of clobbering the user's own choice. Stripped again inside
+// applyModernPolish() once read, so it never leaks into the final SVG.
+const EXPLICIT_STROKE_WIDTH_ATTR = 'data-mermaid-native-explicit-stroke-width';
+
 export function parseInlineStyleAttr(styleAttr) {
   const declarations = {};
   (styleAttr || '').split(';').forEach((decl) => {
@@ -245,6 +253,16 @@ function inlineSvgStyles(svgString) {
             if (forceOverwrite || !alreadyWrittenByUs(el, attr)) {
               el.setAttribute(attr, value);
               markWritten(el, attr);
+              // Only the !important pass (forceOverwrite) represents a real
+              // per-element classDef/class override winning the cascade —
+              // the normal (non-important) pass is just the theme's own
+              // generic `.node rect{stroke-width:1px}` baseline rule, which
+              // applyModernPolish() is supposed to keep bumping to its
+              // fixed value. Marking there too would mark every node in
+              // every diagram and defeat that bump entirely.
+              if (forceOverwrite && attr === 'stroke-width') {
+                el.setAttribute(EXPLICIT_STROKE_WIDTH_ATTR, '1');
+              }
             }
           });
         });
@@ -309,7 +327,13 @@ function inlineSvgStyles(svgString) {
       const declarations = parseInlineStyleAttr(el.getAttribute('style'));
       Object.entries(declarations).forEach(([prop, value]) => {
         const attr = STYLE_PROPS_TO_ATTRS[prop];
-        if (attr) el.setAttribute(attr, value);
+        if (attr) {
+          el.setAttribute(attr, value);
+          // Always a genuine per-element override (this whole pass only
+          // exists for per-node style="..." directives) — see
+          // EXPLICIT_STROKE_WIDTH_ATTR above.
+          if (attr === 'stroke-width') el.setAttribute(EXPLICIT_STROKE_WIDTH_ATTR, '1');
+        }
       });
       el.removeAttribute('style');
     });
@@ -396,7 +420,20 @@ function applyModernPolish(svgString, idPrefix) {
       // every node already carries SOME stroke-width from the theme's
       // <style> block by this point, so "already has the attribute" is
       // guaranteed true and would otherwise always skip this.
-      el.setAttribute('stroke-width', '3');
+      //
+      // Exception: a node the per-node border-width picker explicitly set
+      // (EXPLICIT_STROKE_WIDTH_ATTR, written by inlineSvgStyles() above) —
+      // that's a real user choice, not a theme default, and this bump would
+      // otherwise silently overwrite it back to 3 on every render. Verified
+      // via jsdom against both flowchart's inline-style-attribute path and
+      // state diagrams' !important classDef path that only genuine
+      // per-element overrides carry this marker, never the theme's own
+      // generic (non-important) `.node rect{stroke-width:1px}` rule.
+      if (el.hasAttribute(EXPLICIT_STROKE_WIDTH_ATTR)) {
+        el.removeAttribute(EXPLICIT_STROKE_WIDTH_ATTR);
+      } else {
+        el.setAttribute('stroke-width', '3');
+      }
     });
 
     // Universal modern font + slightly heavier weight, applied regardless

@@ -12,6 +12,7 @@ export default function DiagramView({
   idPrefix = 'diagram',
   index = 0,
   onNodeClick,
+  selectedNode,
 }) {
   const [svg, setSvg] = useState(null);
   const [error, setError] = useState(null);
@@ -51,5 +52,7 @@ export default function DiagramView({
     );
   }
 
-  return <DiagramCanvas svg={svg} theme={theme} onNodeClick={onNodeClick} />;
+  return (
+    <DiagramCanvas svg={svg} theme={theme} onNodeClick={onNodeClick} selectedNode={selectedNode} />
+  );
 }

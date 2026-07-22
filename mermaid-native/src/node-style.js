@@ -26,11 +26,14 @@ const RESERVED_WORDS = new Set([
   'LR',
 ]);
 
-// Fill/stroke/text-color are the three channels the picker exposes — a
-// deliberate subset of mermaid-renderer.js's full STYLE_PROPS_TO_ATTRS
-// whitelist (which also covers stroke-width, opacity, fonts, etc., but
-// those aren't exposed as picker controls).
-const NODE_STYLE_PROPS = ['fill', 'stroke', 'color'];
+// Fill/stroke/border-width/text-color are the four channels the picker
+// exposes — a deliberate subset of mermaid-renderer.js's full
+// STYLE_PROPS_TO_ATTRS whitelist (which also covers opacity, fonts, etc.,
+// not exposed as picker controls). stroke-width overrides need
+// mermaid-renderer.js's EXPLICIT_STROKE_WIDTH_ATTR marking to survive
+// applyModernPolish()'s otherwise-unconditional border-width bump — see
+// that file's comments.
+const NODE_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isFlowchartSource(source) {
   const firstContentLine = (source || '')

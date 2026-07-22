@@ -29,7 +29,7 @@ const RESERVED_WORDS = new Set([
   'LR',
 ]);
 
-const STATE_STYLE_PROPS = ['fill', 'stroke', 'color'];
+const STATE_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isStateDiagramSource(source) {
   const firstContentLine = (source || '')

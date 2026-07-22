@@ -75,6 +75,15 @@ test('upsertERStyle removes both lines once every channel is cleared', () => {
   assert.equal(next, 'erDiagram\nCUSTOMER ||--o{ ORDER : places');
 });
 
+test('upsertERStyle supports the stroke-width (border width) channel', () => {
+  const source = 'erDiagram\nCUSTOMER ||--o{ ORDER : places';
+  const next = upsertERStyle(source, 'CUSTOMER', { 'stroke-width': '6' });
+  assert.equal(
+    next,
+    'erDiagram\nCUSTOMER ||--o{ ORDER : places\nclassDef nodeStyle_CUSTOMER stroke-width:6\nclass CUSTOMER nodeStyle_CUSTOMER'
+  );
+});
+
 // The classDef/class syntax's validity against the real Mermaid parser, and
 // the fact that it renders as an inline `style="...!important"` attribute
 // directly on the entity's <rect> (a different rendered-output path from
