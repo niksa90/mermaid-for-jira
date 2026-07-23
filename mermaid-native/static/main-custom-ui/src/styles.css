@@ -358,9 +358,30 @@ body {
   color: var(--color-text-subtle);
 }
 
-.node-style-popover-reset {
+/* A compound selector (.btn-subtle.node-style-popover-reset), not just the
+   latter alone: guarantees this wins over plain .btn-subtle's box styling
+   regardless of which rule happens to sit later in the file. Per direct
+   user feedback that this specific button — the one plain bordered
+   rectangle left in an otherwise pill/circle/shadow-styled popover — read
+   as flat and dated ("Win95-like") next to the swatches and segmented
+   border-width control right above it. Rounded into a pill and given a
+   soft shadow instead of a visible border, matching the zoom control and
+   diagram-card treatment introduced elsewhere in this same pass. */
+.btn-subtle.node-style-popover-reset {
   margin-top: 2px;
   align-self: flex-start;
+  border-color: transparent;
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
+}
+
+.btn-subtle.node-style-popover-reset:hover {
+  border-color: transparent;
+  box-shadow: 0 1px 4px rgba(9, 30, 66, 0.15);
+}
+
+.node-style-popover-reset-icon {
+  font-size: 13px;
 }
 
 /* Curated quick-pick swatches (QUICK_SWATCHES) plus one native color input

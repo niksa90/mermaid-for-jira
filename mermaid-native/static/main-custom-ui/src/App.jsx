@@ -808,6 +808,9 @@ export default function App() {
             updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
           }}
         >
+          <span className="node-style-popover-reset-icon" aria-hidden="true">
+            ↺
+          </span>
           Reset node
         </button>
       </div>
