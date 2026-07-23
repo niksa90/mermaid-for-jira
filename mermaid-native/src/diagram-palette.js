@@ -239,11 +239,24 @@ function sequenceEntries() {
   ];
 }
 
-// Both confirmed against the real parser: a state can be declared standalone
-// (`state StateName`, no transition needed) and a `<<choice>>` pseudostate
-// likewise doesn't need any transition referencing it yet to be valid on
-// its own — same "insert an unconnected declaration, wire it up afterward
-// via Connect" pattern as every other palette entry.
+// A state CAN be declared standalone (`state StateName`, no transition
+// needed) and a `<<choice>>` pseudostate likewise doesn't need one to be
+// valid syntax — both confirmed against the real parser. But unlike every
+// other diagram kind this palette supports (flowchart/class/ER all render
+// an isolated, transition-less node just fine), a state with zero
+// transitions is real, valid Mermaid that the real *renderer* then
+// silently drops from the SVG entirely — never drawn, not even off to one
+// side — confirmed via a jsdom scratch render: a source containing nothing
+// but `state B` renders zero node elements. A user clicking "State" would
+// see literally nothing happen and reasonably conclude the button was
+// broken (a real report, not a hypothetical). So unlike this file's other
+// "insert an unconnected declaration, wire it up afterward via Connect"
+// entries, both state entries here also add an initial `[*] --> NewId`
+// transition — confirmed to render immediately and to coexist fine with
+// any number of *other* existing `[*] --> ...` transitions already in the
+// diagram (Mermaid doesn't restrict the initial pseudostate to one
+// outgoing transition). Still freely rewireable afterward via Connect/the
+// edge popover, same as any other transition.
 function stateEntries() {
   return [
     {
@@ -252,7 +265,8 @@ function stateEntries() {
       glyph: '◉',
       insert(source) {
         const base = ensureHeader(source, 'stateDiagram-v2');
-        return appendLines(base, [`state ${nextAvailableId(parseStateIds(base))}`]);
+        const id = nextAvailableId(parseStateIds(base));
+        return appendLines(base, [`state ${id}`, `[*] --> ${id}`]);
       },
     },
     {
@@ -261,7 +275,8 @@ function stateEntries() {
       glyph: '◈',
       insert(source) {
         const base = ensureHeader(source, 'stateDiagram-v2');
-        return appendLines(base, [`state ${nextAvailableId(parseStateIds(base))} <<choice>>`]);
+        const id = nextAvailableId(parseStateIds(base));
+        return appendLines(base, [`state ${id} <<choice>>`, `[*] --> ${id}`]);
       },
     },
   ];

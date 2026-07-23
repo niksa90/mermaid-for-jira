@@ -137,21 +137,27 @@ test('resolvePaletteKind recognizes state diagrams and offers State/Choice entri
   );
 });
 
-test('the State entry appends a bare declaration with a fresh id, not colliding with existing states', () => {
+// Both entries also add an initial `[*] --> NewId` transition, not just the
+// bare declaration — confirmed via a jsdom scratch render that Mermaid's
+// real state-diagram renderer (unlike flowchart/class/ER) silently drops a
+// transition-less state from the SVG entirely, so a bare declaration alone
+// would insert a node the user could never actually see or click. See
+// stateEntries' own comment for the real bug report this fixes.
+test('the State entry appends a fresh-id declaration plus an initial transition, not colliding with existing states', () => {
   const source = 'stateDiagram-v2\n  [*] --> A\n  A --> B';
   const palette = resolvePaletteKind(source);
   const state = palette.entries.find((e) => e.id === 'state');
-  assert.equal(state.insert(source), 'stateDiagram-v2\n  [*] --> A\n  A --> B\nstate C');
+  assert.equal(state.insert(source), 'stateDiagram-v2\n  [*] --> A\n  A --> B\nstate C\n[*] --> C');
 });
 
-test('the Choice entry appends a <<choice>> pseudostate, and a second click does not collide with the first', () => {
+test('the Choice entry appends a <<choice>> pseudostate plus an initial transition, and a second click does not collide with the first', () => {
   const source = 'stateDiagram-v2\n  [*] --> A';
   const palette = resolvePaletteKind(source);
   const choice = palette.entries.find((e) => e.id === 'choice');
   const once = choice.insert(source);
-  assert.equal(once, 'stateDiagram-v2\n  [*] --> A\nstate B <<choice>>');
+  assert.equal(once, 'stateDiagram-v2\n  [*] --> A\nstate B <<choice>>\n[*] --> B');
   const twice = choice.insert(once);
-  assert.equal(twice, 'stateDiagram-v2\n  [*] --> A\nstate B <<choice>>\nstate C <<choice>>');
+  assert.equal(twice, 'stateDiagram-v2\n  [*] --> A\nstate B <<choice>>\n[*] --> B\nstate C <<choice>>\n[*] --> C');
 });
 
 test('resolvePaletteKind recognizes class diagrams and offers a Class entry', () => {
