@@ -140,6 +140,14 @@ export default function DiagramCanvas({
   // can restyle (class/ER) or delete from one place. Only wired up when
   // connectKind is set, same scope as the connect gesture itself.
   onEdgeClick,
+  // Called with `{ kind, nodeId, rect }` when a node/participant is
+  // double-clicked — App.jsx opens the double-click-to-edit-text popover
+  // from this (see node-text.js). Reuses connectKind purely to pick the
+  // right node-detection scheme via resolveNodeTarget (every kind
+  // node-text.js supports already has a connectKind entry, so no separate
+  // prop is needed here) — DiagramCanvas itself has no notion of "text
+  // editing," it just resolves what got double-clicked.
+  onNodeDoubleClick,
 }) {
   const connectable = !!connectKind;
   const wrapRef = useRef(null);
@@ -317,6 +325,19 @@ export default function DiagramCanvas({
     viewRef.current = { ...baseViewBoxRef.current };
     applyView();
     setZoomPercent(100);
+  }
+
+  // Double-click resets zoom (the pre-existing behavior) *unless* it landed
+  // on a node/participant, in which case it opens the label popover
+  // instead — checked first so the two gestures don't collide on the same
+  // container-level event.
+  function onContainerDoubleClick(e) {
+    const hit = resolveNodeTarget(e.target, connectKind);
+    if (hit && onNodeDoubleClick) {
+      onNodeDoubleClick({ kind: hit.kind, nodeId: hit.nodeId, rect: hit.target.getBoundingClientRect() });
+      return;
+    }
+    resetView();
   }
 
   // Attached manually (not React's onWheel): React treats wheel listeners
@@ -717,7 +738,7 @@ export default function DiagramCanvas({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={endDrag}
-        onDoubleClick={resetView}
+        onDoubleClick={onContainerDoubleClick}
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: svg }}
       />
