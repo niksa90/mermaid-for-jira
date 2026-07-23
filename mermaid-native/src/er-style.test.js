@@ -135,3 +135,10 @@ test('renameERId is a no-op if oldId does not exist, newId is falsy, or newId al
   assert.equal(renameERId(source, 'A', 'B'), source);
   assert.equal(renameERId(source, 'A', 'A'), source);
 });
+
+test('renameERId rejects a newId containing anything other than letters/digits/underscore, avoiding a corrupted rename', () => {
+  const source = 'erDiagram\n  A ||--o{ B : has';
+  assert.equal(renameERId(source, 'A', 'Customer Orders'), source);
+  assert.equal(renameERId(source, 'A', 'A-B'), source);
+  assert.equal(renameERId(source, 'A', 'Order!'), source);
+});

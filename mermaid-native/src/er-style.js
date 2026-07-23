@@ -177,9 +177,18 @@ const BLOCK_LINE_RE = /^(\s*)([A-Za-z_]\w*)(\s*\{\s*)$/;
  * svg-node-id.js's extractClickedErEdgeId) can't be renamed via this
  * function, pre-existing and consistent with parseERIds/erEdgeRegex in
  * diagram-connect.js, not a new gap this introduces.
+ *
+ * `newId` is rejected (no-op, source unchanged) unless it matches
+ * `[A-Za-z_]\w*` — the double-click-to-edit gesture invites free text
+ * ("add text to this node"), but an ER id isn't free text: a space or
+ * punctuation would corrupt every line it's substituted into (an
+ * unparseable `New Name {` block header, a relationship line that no
+ * longer matches REL_LINE_RE on the next read). Better to silently refuse
+ * an invalid rename than to write broken Mermaid syntax.
  */
 export function renameERId(source, oldId, newId) {
   if (!oldId || !newId || oldId === newId) return source || '';
+  if (!/^[A-Za-z_]\w*$/.test(newId)) return source || '';
   const ids = parseERIds(source);
   if (!ids.includes(oldId) || ids.includes(newId)) return source || '';
 
