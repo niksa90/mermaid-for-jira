@@ -28,6 +28,10 @@ export default function DiagramView({
   knownIds,
   onConnect,
   onEdgeClick,
+  // The diagram's own label (App.jsx's diagram.label), threaded through to
+  // DiagramCanvas purely to name a downloaded SVG/PNG file sensibly —
+  // optional, DiagramCanvas falls back to a generic name when absent.
+  filenameHint,
 }) {
   const [svg, setSvg] = useState(null);
   const [error, setError] = useState(null);
@@ -101,6 +105,7 @@ export default function DiagramView({
       knownIds={knownIds}
       onConnect={onConnect}
       onEdgeClick={onEdgeClick}
+      filenameHint={filenameHint}
     />
   );
 }
