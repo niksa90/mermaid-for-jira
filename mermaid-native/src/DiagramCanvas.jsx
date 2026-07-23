@@ -579,10 +579,22 @@ export default function DiagramCanvas({
   function renderConnectHandle() {
     if (!connectable || !hoveredNode || activeConnectDrag || pendingConnectFrom) return null;
     const { rect } = hoveredNode;
+    // The bounding-box *corner* (the original position here) is nowhere
+    // near a diamond/decision node's actual outline — confirmed via a
+    // jsdom scratch render of a real decision node's polygon points
+    // (`15,0 30,-15 15,-30 0,-15`, relative to its own bounding box): a
+    // diamond's vertices sit at each edge's *midpoint*, never at a corner,
+    // so the corner is close to the single farthest point from the shape
+    // for exactly this shape — a real "impossible to click" bug report,
+    // not just a cosmetic nit. The right-edge midpoint, by contrast, sits
+    // exactly on a diamond's rightmost vertex, and also lands on or right
+    // at the visible edge for every other shape this palette offers
+    // (rectangle, circle, hexagon, parallelogram, ...) since they're all
+    // centered and symmetric top-to-bottom within their own bounding box.
     return (
       <div
         className="connect-handle"
-        style={{ left: rect.right - 6, top: rect.bottom - 6 }}
+        style={{ left: rect.right - 6, top: rect.top + rect.height / 2 - 6 }}
         title="Drag to another node to connect them, or click and then click another node"
         onPointerDown={(e) => {
           e.stopPropagation();
