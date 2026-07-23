@@ -231,11 +231,40 @@ export default function DiagramCanvas({
   // and no markers, so it adds no visible pixels of its own — it only
   // exists to be a bigger target for the pointer to land on. Inserted right
   // after the original so it paints on top and wins the hit-test.
+  //
+  // Depends on `connectKind?.kind` (a stable primitive), NOT the whole
+  // `connectKind` object — App.jsx passes `connectKind={resolveConnectKind(
+  // diagram.source)}`, a brand-new object literal on *every* App.jsx
+  // render, whether or not diagram.source actually changed (e.g. typing
+  // into this app's own Section field, or the label popover's non-ER
+  // fields, re-renders App.jsx per keystroke without touching this
+  // diagram's source at all). Depending on the object itself used to
+  // re-run this effect on every one of those unrelated re-renders — and
+  // since `svg`'s DOM hadn't changed, there was nothing to stop it cloning
+  // a *second* hit-area on top of the first, then a third, unboundedly, for
+  // as long as the user kept typing. A real, reported browser hang — the
+  // same root-cause class (an effect re-firing far faster, and far more
+  // often, than anyone intended) as the NODE_COLOR_RENDER_DEBOUNCE_MS bug
+  // documented elsewhere in this app, just triggered by prop-identity churn
+  // instead of a fast-firing native event. The `data-hit-clone` marker
+  // below is a second, independent safety net: even if this effect is ever
+  // made to depend on something unstable again, skipping any edge that
+  // already has its own marked clone caches this from re-cloning instead of
+  // relying solely on the dependency array being right.
   useEffect(() => {
     const container = containerRef.current;
-    const selector = connectKind && EDGE_SELECTORS[connectKind.kind];
+    const kind = connectKind?.kind;
+    const selector = kind && EDGE_SELECTORS[kind];
     if (!container || !selector) return;
     container.querySelectorAll(selector).forEach((path) => {
+      // The clone itself matches `selector` too (cloneNode copies the
+      // matched attribute along with everything else), so without this
+      // check a re-run would also treat a previous run's *clone* as a
+      // source to clone again — turning the marker check below into linear
+      // (not fully suppressed) growth instead of a hard cap at one clone
+      // per real edge.
+      if (path.hasAttribute('data-hit-clone')) return;
+      if (path.nextSibling?.hasAttribute?.('data-hit-clone')) return;
       const hitPath = path.cloneNode(false);
       hitPath.removeAttribute('style');
       hitPath.removeAttribute('marker-start');
@@ -244,10 +273,10 @@ export default function DiagramCanvas({
       hitPath.setAttribute('stroke', 'transparent');
       hitPath.setAttribute('stroke-width', '14');
       hitPath.setAttribute('pointer-events', 'stroke');
+      hitPath.setAttribute('data-hit-clone', '1');
       path.parentNode.insertBefore(hitPath, path.nextSibling);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [svg, connectKind]);
+  }, [svg, connectKind?.kind]);
 
   // A narrower view (viewRef.width) than the diagram's natural size
   // (baseViewBoxRef.width) means zoomed in, hence the inverse ratio.
