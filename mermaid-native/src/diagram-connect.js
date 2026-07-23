@@ -42,3 +42,45 @@ export function connectNodes(source, fromId, toId) {
   const trimmed = lines.length && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
   return [...trimmed, `${fromId} --> ${toId}`].join('\n');
 }
+
+// Longer/more-specific bracket pairs first, same ordering rule
+// node-label.js's BRACKET_SHAPES comment documents — a doubled pair like
+// `[[...]]` would otherwise never get the chance to match before the
+// single-bracket alternative already consumed the first `[`.
+const SHAPE_GROUP =
+  '(\\[\\[[^\\]]*\\]\\]|\\[\\([^)]*\\)\\]|\\(\\([^)]*\\)\\)|\\{\\{[^}]*\\}\\}|\\[[^\\]]*\\]|\\([^)]*\\)|\\{[^}]*\\})?';
+const ARROW = '(?:<)?[-=.]{2,}[ox>]?';
+
+/**
+ * Removes the edge connecting fromId -> toId from a flowchart's source.
+ * Only matches a line whose *entire* trimmed content is that one edge
+ * expression (optionally with a shape/label attached to either end, and
+ * an optional `|label|` on the arrow) — deliberately not a mid-line
+ * splice, so a line combining a node declaration with the edge (this
+ * app's own default new-diagram template, `A[Start] --> B[End]`) isn't at
+ * risk of a chained multi-arrow line (`A --> B --> C`) being partially,
+ * incorrectly rewritten. A chained line like that simply won't match here
+ * (same "best-effort, doesn't touch what it doesn't fully recognize"
+ * convention as node-style.js's parsers) — clicking that edge is a no-op,
+ * not a corruption.
+ *
+ * Deleting the edge never discards a node's own shape/label: if either
+ * side had one on this exact line, it's preserved as its own standalone
+ * declaration line rather than disappearing along with the connector.
+ */
+export function deleteEdge(source, fromId, toId) {
+  if (!fromId || !toId) return source || '';
+  const lines = (source || '').split('\n');
+  const re = new RegExp(`^\\s*${fromId}${SHAPE_GROUP}\\s*${ARROW}\\s*(?:\\|[^|]*\\|\\s*)?${toId}${SHAPE_GROUP}\\s*$`);
+
+  const lineIndex = lines.findIndex((line) => re.test(line));
+  if (lineIndex === -1) return source || '';
+
+  const [, fromShape, toShape] = lines[lineIndex].match(re);
+  const replacement = [];
+  if (fromShape) replacement.push(`${fromId}${fromShape}`);
+  if (toShape) replacement.push(`${toId}${toShape}`);
+
+  lines.splice(lineIndex, 1, ...replacement);
+  return lines.join('\n');
+}

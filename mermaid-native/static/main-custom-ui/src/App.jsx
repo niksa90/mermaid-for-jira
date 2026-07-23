@@ -26,7 +26,7 @@ import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
 import { resolveNodeStyleKind } from '../../../src/node-style-kind';
 import { resolvePaletteKind } from '../../../src/diagram-palette';
-import { isConnectable, connectNodes } from '../../../src/diagram-connect';
+import { isConnectable, connectNodes, deleteEdge } from '../../../src/diagram-connect';
 import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
 // text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
@@ -242,10 +242,18 @@ export default function App() {
   // be undone: { diagram, index } — index is where it lived so undo puts it
   // back in the same place rather than at the end of the list.
   const [undoState, setUndoState] = useState(null);
+  // Same pattern as undoState above, but for arrow deletion (DiagramCanvas's
+  // click-to-delete-edge) — kept as its own independent state/timeout
+  // rather than generalizing undoState to hold either kind, since the two
+  // actions (remove a whole diagram vs. delete one edge within it) don't
+  // share enough shape to be worth threading through one union type yet:
+  // { diagramId, prevSource }.
+  const [edgeUndoState, setEdgeUndoState] = useState(null);
 
   const issueKeyRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const undoTimeoutRef = useRef(null);
+  const edgeUndoTimeoutRef = useRef(null);
   const latestDiagramsRef = useRef([]);
   // What we believe the server currently holds — used for optimistic
   // concurrency (see resolvers/index.js). Updated on load and after every
@@ -392,6 +400,9 @@ export default function App() {
       }
       if (undoTimeoutRef.current) {
         clearTimeout(undoTimeoutRef.current);
+      }
+      if (edgeUndoTimeoutRef.current) {
+        clearTimeout(edgeUndoTimeoutRef.current);
       }
     },
     []
@@ -590,6 +601,37 @@ export default function App() {
     setModes((prev) => ({ ...prev, [undoState.diagram.id]: 'display' }));
     setUndoState(null);
     persist(restored, { immediate: true });
+  }
+
+  // Deletes a flowchart edge immediately (DiagramCanvas's click-to-delete),
+  // same "act now, offer Undo" pattern as confirmRemove/undoRemove above,
+  // rather than a confirmation dialog before the delete happens.
+  function handleEdgeClick(diagramId, fromId, toId) {
+    const diagram = latestDiagramsRef.current.find((d) => d.id === diagramId);
+    if (!diagram) return;
+    const nextSource = deleteEdge(diagram.source, fromId, toId);
+    // deleteEdge no-ops (returns the same string) if it didn't recognize
+    // the edge as a single whole line — nothing to delete or undo.
+    if (nextSource === diagram.source) return;
+
+    if (edgeUndoTimeoutRef.current) clearTimeout(edgeUndoTimeoutRef.current);
+    setEdgeUndoState({ diagramId, prevSource: diagram.source });
+    edgeUndoTimeoutRef.current = setTimeout(() => {
+      edgeUndoTimeoutRef.current = null;
+      setEdgeUndoState(null);
+    }, UNDO_TIMEOUT_MS);
+
+    updateDiagram(diagramId, { source: nextSource }, { immediate: true });
+  }
+
+  function undoEdgeDelete() {
+    if (!edgeUndoState) return;
+    if (edgeUndoTimeoutRef.current) {
+      clearTimeout(edgeUndoTimeoutRef.current);
+      edgeUndoTimeoutRef.current = null;
+    }
+    updateDiagram(edgeUndoState.diagramId, { source: edgeUndoState.prevSource }, { immediate: true });
+    setEdgeUndoState(null);
   }
 
   function setMode(id, mode) {
@@ -1061,6 +1103,7 @@ export default function App() {
                         { immediate: true }
                       )
                     }
+                    onEdgeClick={(fromId, toId) => handleEdgeClick(diagram.id, fromId, toId)}
                   />
                 </DiagramErrorBoundary>
               </div>
@@ -1112,6 +1155,15 @@ export default function App() {
         <div className="undo-banner">
           <span>Diagram removed.</span>
           <button type="button" className="btn btn-subtle" onClick={undoRemove}>
+            Undo
+          </button>
+        </div>
+      )}
+
+      {edgeUndoState && (
+        <div className="undo-banner">
+          <span>Arrow removed.</span>
+          <button type="button" className="btn btn-subtle" onClick={undoEdgeDelete}>
             Undo
           </button>
         </div>

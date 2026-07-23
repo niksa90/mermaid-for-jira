@@ -46,3 +46,33 @@ export function extractClickedNodeId(domId) {
   }
   return null;
 }
+
+/**
+ * Returns `{ fromId, toId }` for a clicked flowchart edge's DOM id (used by
+ * diagram-connect.js's arrow-deletion), or `null` if `domId` isn't a
+ * flowchart edge. Mermaid emits these as
+ * `<renderId>-L_<fromId>_<toId>_<counter>` (confirmed via a jsdom scratch
+ * render of a real flowchart, same convention as extractClickedNodeId
+ * above) — state-diagram edges don't carry their endpoints in the id at
+ * all (just `<renderId>-edge<N>`), which is exactly why arrow deletion is
+ * flowchart-only for now, same scope as connectNodes/isConnectable.
+ *
+ * Splits `fromId_toId` on the *first* underscore, so a from-id containing
+ * its own underscore would misresolve — this app's own templates/palette
+ * only ever generate short alphanumeric ids, so this is the same
+ * "best-effort, doesn't cover every possible hand-typed id" tradeoff as
+ * every other regex-based parser in this app family, not a full parser.
+ */
+export function extractClickedEdgeId(domId) {
+  if (!domId) return null;
+  const token = '-L_';
+  const idx = domId.indexOf(token);
+  if (idx === -1) return null;
+  const rest = domId.slice(idx + token.length); // e.g. "A_B_0"
+  const withoutCounter = rest.replace(/_\d+$/, '');
+  const underscoreIdx = withoutCounter.indexOf('_');
+  if (underscoreIdx === -1) return null;
+  const fromId = withoutCounter.slice(0, underscoreIdx);
+  const toId = withoutCounter.slice(underscoreIdx + 1);
+  return fromId && toId ? { fromId, toId } : null;
+}

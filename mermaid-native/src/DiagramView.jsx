@@ -26,6 +26,7 @@ export default function DiagramView({
   // anything to opt out.
   connectable = false,
   onConnect,
+  onEdgeClick,
 }) {
   const [svg, setSvg] = useState(null);
   const [error, setError] = useState(null);
@@ -97,6 +98,7 @@ export default function DiagramView({
       selectedNode={selectedNode}
       connectable={connectable}
       onConnect={onConnect}
+      onEdgeClick={onEdgeClick}
     />
   );
 }

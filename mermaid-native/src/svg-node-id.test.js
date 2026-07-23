@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractClickedNodeId } from './svg-node-id.js';
+import { extractClickedNodeId, extractClickedEdgeId } from './svg-node-id.js';
 
 test('extracts a flowchart node id, stripping the render-id prefix and counter suffix', () => {
   assert.deepEqual(extractClickedNodeId('d-1737-abc123-0-x7f3a2-flowchart-A-0'), {
@@ -37,4 +37,14 @@ test('returns null for an id with no known marker (e.g. an edge or cluster wrapp
 test('returns null for a nullish/empty id', () => {
   assert.equal(extractClickedNodeId(null), null);
   assert.equal(extractClickedNodeId(''), null);
+});
+
+test('extractClickedEdgeId extracts both endpoints of a flowchart edge, stripping the counter', () => {
+  assert.deepEqual(extractClickedEdgeId('dedge-L_A_B_0'), { fromId: 'A', toId: 'B' });
+});
+
+test('extractClickedEdgeId returns null for a node id, or anything with no -L_ marker', () => {
+  assert.equal(extractClickedEdgeId('d-1737-abc123-0-x7f3a2-flowchart-A-0'), null);
+  assert.equal(extractClickedEdgeId('renderid-cluster-subGraph0-0'), null);
+  assert.equal(extractClickedEdgeId(null), null);
 });

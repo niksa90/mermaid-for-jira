@@ -675,8 +675,18 @@ body {
   min-height: 220px;
 }
 
+/* No fixed height (was 320px) — per direct user feedback, a long diagram's
+   source made .codemirror-editor grow well past that (its own min-height
+   below is a floor, not a cap; CodeMirror itself doesn't clip), leaving
+   the preview pane pinned short and visually disconnected from a much
+   taller editor next to it. min-height matches .codemirror-editor's own
+   220px floor so a short diagram still gets a reasonable minimum; with no
+   max on either side, .editor-split's existing `align-items: stretch`
+   (unblocked now that this no longer sets an explicit height) keeps the
+   two panes matched to whichever is naturally taller — almost always the
+   editor, growing with line count. */
 .preview-pane {
-  height: 320px;
+  min-height: 220px;
   overflow: hidden;
   position: relative;
 }
@@ -754,7 +764,16 @@ body {
   cursor: pointer;
 }
 
-.diagram-canvas-panning .node[id] {
+/* Hints that an edge is clickable too — arrow deletion (diagram-connect.js's
+   deleteEdge, wired up in DiagramCanvas.jsx's handleNodeClick). Flowchart's
+   own edge class, so this never applies to a diagram type where clicking
+   an edge doesn't do anything. */
+.diagram-canvas .flowchart-link[id] {
+  cursor: pointer;
+}
+
+.diagram-canvas-panning .node[id],
+.diagram-canvas-panning .flowchart-link[id] {
   cursor: grabbing;
 }
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { VidFullScreenOnIcon, VidFullScreenOffIcon } from './icons';
 import { isDarkMermaidTheme } from './mermaid-renderer';
-import { extractClickedNodeId } from './svg-node-id';
+import { extractClickedNodeId, extractClickedEdgeId } from './svg-node-id';
 
 const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.2;
@@ -12,6 +12,10 @@ const MAX_SCALE = 8;
 // mouse) would always read as "the user panned, not clicked" and the
 // click-to-style popover (onNodeClick) would never fire.
 const CLICK_MOVE_THRESHOLD = 6;
+// Grace delay before the connect handle disappears after the pointer
+// leaves a node — see onPointerMove's hover-tracking for why this can't be
+// instant.
+const HOVER_CLEAR_GRACE_MS = 350;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -43,6 +47,13 @@ export default function DiagramCanvas({
   // Called with (fromNodeId, toNodeId) once a connect gesture completes
   // against a valid, different target node.
   onConnect,
+  // Called with (fromNodeId, toNodeId) when a flowchart edge is clicked —
+  // App.jsx deletes it immediately (with an undo banner) rather than this
+  // component needing its own confirmation UI. Only wired up when
+  // connectable is true, same scope as the connect gesture itself (see
+  // extractClickedEdgeId's own comment for why edge deletion specifically
+  // can't extend to state/class/ER as easily as node connect can).
+  onEdgeClick,
 }) {
   const wrapRef = useRef(null);
   const containerRef = useRef(null);
@@ -81,6 +92,15 @@ export default function DiagramCanvas({
   // a held-down button anymore.
   const [pendingConnectFrom, setPendingConnectFrom] = useState(null);
   const [pendingPointer, setPendingPointer] = useState(null);
+  // See onPointerMove's HOVER_CLEAR_GRACE_MS usage.
+  const hoverClearTimeoutRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      if (hoverClearTimeoutRef.current) clearTimeout(hoverClearTimeoutRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -238,7 +258,28 @@ export default function DiagramCanvas({
       }
       const target = e.target?.closest?.('.node[id]');
       const resolved = target && extractClickedNodeId(target.getAttribute('id'));
-      setHoveredNode(resolved ? { nodeId: resolved.nodeId, rect: target.getBoundingClientRect() } : null);
+      if (resolved) {
+        if (hoverClearTimeoutRef.current) {
+          clearTimeout(hoverClearTimeoutRef.current);
+          hoverClearTimeoutRef.current = null;
+        }
+        setHoveredNode({ nodeId: resolved.nodeId, rect: target.getBoundingClientRect() });
+      } else if (!hoverClearTimeoutRef.current) {
+        // Not over a node right now — but don't clear immediately. A
+        // shape's rendered outline can sit well inside its bounding box
+        // (a diamond's corners, for instance — see the connect handle's
+        // own positioning), so reaching the handle means crossing empty
+        // space that isn't `.node[id]` at all. Clearing on the spot made
+        // the handle disappear before the pointer ever reached it —
+        // a real "this isn't clickable" bug report, not a hypothetical.
+        // A short grace delay lets that crossing finish; it's cancelled
+        // above the moment the pointer re-enters a node (this one or any
+        // other), so it never causes a stale handle to linger visibly.
+        hoverClearTimeoutRef.current = setTimeout(() => {
+          hoverClearTimeoutRef.current = null;
+          setHoveredNode(null);
+        }, HOVER_CLEAR_GRACE_MS);
+      }
     }
 
     if (!dragRef.current || !svgElRef.current || !viewRef.current) return;
@@ -276,6 +317,14 @@ export default function DiagramCanvas({
   // pattern). stopPropagation on the handle's own pointerdown (see JSX)
   // keeps this from also engaging the container's pan handling.
   function onConnectHandlePointerDown(e, fromNodeId, fromRect) {
+    // A gesture is genuinely starting now — clear any pending grace-delay
+    // hover-clear (see onPointerMove) so it can't fire mid-gesture and wipe
+    // out the hoveredNode state the drag/pending-click logic below relies
+    // on for the drop-target highlight.
+    if (hoverClearTimeoutRef.current) {
+      clearTimeout(hoverClearTimeoutRef.current);
+      hoverClearTimeoutRef.current = null;
+    }
     const startX = e.clientX;
     const startY = e.clientY;
     let moved = false;
@@ -378,12 +427,22 @@ export default function DiagramCanvas({
       setPendingPointer(null);
       return;
     }
-    if (!onNodeClick || !downTarget?.closest) return;
+    if (!downTarget?.closest) return;
     const target = downTarget.closest('.node[id]');
-    if (!target) return;
-    const resolved = extractClickedNodeId(target.getAttribute('id'));
-    if (!resolved) return;
-    onNodeClick({ ...resolved, rect: target.getBoundingClientRect() });
+    if (target) {
+      const resolved = extractClickedNodeId(target.getAttribute('id'));
+      if (resolved && onNodeClick) onNodeClick({ ...resolved, rect: target.getBoundingClientRect() });
+      return;
+    }
+
+    // Not a node — check whether it's a flowchart edge instead (arrow
+    // deletion). connectable-gated: same scope as the connect gesture
+    // itself, since extractClickedEdgeId only resolves flowchart edges.
+    if (connectable && onEdgeClick) {
+      const edgeTarget = downTarget.closest('.flowchart-link[id]');
+      const resolvedEdge = edgeTarget && extractClickedEdgeId(edgeTarget.getAttribute('id'));
+      if (resolvedEdge) onEdgeClick(resolvedEdge.fromId, resolvedEdge.toId);
+    }
   }
 
   // Fullscreen: a CSS overlay covering the whole Custom UI panel is the
