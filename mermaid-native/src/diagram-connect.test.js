@@ -1,6 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isConnectable, connectNodes, deleteEdge } from './diagram-connect.js';
+import {
+  isConnectable,
+  resolveConnectKind,
+  connectNodes,
+  deleteFlowchartEdge,
+  deleteStateEdge,
+  parseClassIds,
+  readClassEdge,
+  deleteClassEdge,
+  setClassEdge,
+  readErEdge,
+  deleteErEdge,
+  setErEdge,
+} from './diagram-connect.js';
 
 test('isConnectable recognizes flowchart and graph, ignoring a leading %%init directive', () => {
   assert.equal(isConnectable('flowchart TD\n  A --> B'), true);
@@ -8,52 +21,124 @@ test('isConnectable recognizes flowchart and graph, ignoring a leading %%init di
   assert.equal(isConnectable('%%{init: {"theme": "dark"}}%%\nflowchart TD\n  A --> B'), true);
 });
 
-test('isConnectable is false for other diagram types (Connect is flowchart-only for now)', () => {
+test('isConnectable is now also true for state, class, and ER (sequence remains unsupported)', () => {
+  assert.equal(isConnectable('stateDiagram-v2\n  [*] --> A'), true);
+  assert.equal(isConnectable('classDiagram\n  class A'), true);
+  assert.equal(isConnectable('erDiagram\n  A ||--o{ B : has'), true);
   assert.equal(isConnectable('sequenceDiagram\n  A->>B: hi'), false);
-  assert.equal(isConnectable('stateDiagram-v2\n  [*] --> A'), false);
   assert.equal(isConnectable(''), false);
 });
 
-test('connectNodes appends a plain arrow between the two given ids', () => {
+test('resolveConnectKind reports arrow options only for class/ER, and needsLabel only for ER', () => {
+  assert.equal(resolveConnectKind('flowchart TD\n  A-->B').arrowOptions, null);
+  assert.equal(resolveConnectKind('stateDiagram-v2\n  [*] --> A').arrowOptions, null);
+  assert.ok(resolveConnectKind('classDiagram\n  class A').arrowOptions.length > 0);
+  assert.ok(resolveConnectKind('erDiagram\n  A ||--o{ B : has').arrowOptions.length > 0);
+  assert.equal(resolveConnectKind('erDiagram\n  A ||--o{ B : has').needsLabel, true);
+  assert.equal(resolveConnectKind('classDiagram\n  class A').needsLabel, false);
+});
+
+test('connectNodes appends a plain arrow between the two given ids for flowchart', () => {
   const source = 'flowchart TD\n  A[Start]\n  B[Process]';
   assert.equal(connectNodes(source, 'A', 'B'), 'flowchart TD\n  A[Start]\n  B[Process]\nA --> B');
 });
 
-test('connectNodes is a no-op for a self-connection', () => {
-  const source = 'flowchart TD\n  A[Start]';
-  assert.equal(connectNodes(source, 'A', 'A'), source);
+test('connectNodes appends a plain transition for state diagrams', () => {
+  const source = 'stateDiagram-v2\n  A\n  B';
+  assert.equal(connectNodes(source, 'A', 'B'), 'stateDiagram-v2\n  A\n  B\nA --> B');
 });
 
-test('connectNodes is a no-op if either id is missing', () => {
-  const source = 'flowchart TD\n  A[Start]';
-  assert.equal(connectNodes(source, '', 'A'), source);
-  assert.equal(connectNodes(source, 'A', ''), source);
+test('connectNodes translates the root_start/root_end pseudostate ids back to [*]', () => {
+  const source = 'stateDiagram-v2\n  [*] --> A';
+  assert.equal(connectNodes(source, 'root_start', 'B'), 'stateDiagram-v2\n  [*] --> A\n[*] --> B');
+  assert.equal(connectNodes(source, 'A', 'root_end'), 'stateDiagram-v2\n  [*] --> A\nA --> [*]');
 });
 
-test('deleteEdge removes a bare edge line entirely', () => {
+test('connectNodes uses the default association arrow for class diagrams, or a chosen one', () => {
+  const source = 'classDiagram\n  class A\n  class B';
+  assert.equal(connectNodes(source, 'A', 'B'), 'classDiagram\n  class A\n  class B\nA --> B');
+  assert.equal(
+    connectNodes(source, 'A', 'B', { arrowId: 'inheritance' }),
+    'classDiagram\n  class A\n  class B\nA <|-- B'
+  );
+});
+
+test('connectNodes always includes a label for ER (mandatory in Mermaid syntax), defaulting to a placeholder', () => {
+  const source = 'erDiagram\n  A\n  B';
+  assert.equal(connectNodes(source, 'A', 'B'), 'erDiagram\n  A\n  B\nA ||--o{ B : relates to');
+  assert.equal(
+    connectNodes(source, 'A', 'B', { arrowId: 'one-to-one', label: 'owns' }),
+    'erDiagram\n  A\n  B\nA ||--|| B : owns'
+  );
+});
+
+test('connectNodes is a no-op for a self-connection, missing ids, or an unsupported diagram type', () => {
+  assert.equal(connectNodes('flowchart TD\n  A[Start]', 'A', 'A'), 'flowchart TD\n  A[Start]');
+  assert.equal(connectNodes('flowchart TD\n  A[Start]', '', 'A'), 'flowchart TD\n  A[Start]');
+  assert.equal(connectNodes('sequenceDiagram\n  participant A', 'A', 'B'), 'sequenceDiagram\n  participant A');
+});
+
+test('deleteFlowchartEdge removes a bare edge line entirely', () => {
   const source = 'flowchart TD\n  A --> B\n  B --> C';
-  assert.equal(deleteEdge(source, 'A', 'B'), 'flowchart TD\n  B --> C');
+  assert.equal(deleteFlowchartEdge(source, 'A', 'B'), 'flowchart TD\n  B --> C');
 });
 
 // The app's own default new-diagram template combines a node declaration
 // with its edge on one line — deleting the edge must not also discard the
 // shape/label that happened to share the line with it.
-test('deleteEdge splits a combined declaration+edge line, preserving both shapes', () => {
+test('deleteFlowchartEdge splits a combined declaration+edge line, preserving both shapes', () => {
   const source = 'flowchart TD\n  A[Start] --> B[End]';
-  assert.equal(deleteEdge(source, 'A', 'B'), 'flowchart TD\nA[Start]\nB[End]');
+  assert.equal(deleteFlowchartEdge(source, 'A', 'B'), 'flowchart TD\nA[Start]\nB[End]');
 });
 
-test('deleteEdge preserves only the side(s) that actually had a shape on that line', () => {
+test('deleteFlowchartEdge preserves only the side(s) that actually had a shape on that line', () => {
   const source = 'flowchart TD\n  B -->|Yes| C[Do the thing]';
-  assert.equal(deleteEdge(source, 'B', 'C'), 'flowchart TD\nC[Do the thing]');
+  assert.equal(deleteFlowchartEdge(source, 'B', 'C'), 'flowchart TD\nC[Do the thing]');
 });
 
-test('deleteEdge is a no-op when no line is exactly that edge (e.g. a chained arrow line)', () => {
+test('deleteFlowchartEdge is a no-op when no line is exactly that edge (e.g. a chained arrow line)', () => {
   const source = 'flowchart TD\n  A --> B --> C';
-  assert.equal(deleteEdge(source, 'A', 'B'), source);
+  assert.equal(deleteFlowchartEdge(source, 'A', 'B'), source);
 });
 
-test('deleteEdge is a no-op if the edge does not exist', () => {
+test('deleteFlowchartEdge is a no-op if the edge does not exist', () => {
   const source = 'flowchart TD\n  A --> B';
-  assert.equal(deleteEdge(source, 'A', 'C'), source);
+  assert.equal(deleteFlowchartEdge(source, 'A', 'C'), source);
+});
+
+test('deleteStateEdge removes the Nth transition line in source order (0-based)', () => {
+  const source = 'stateDiagram-v2\n  [*] --> A\n  A --> B\n  B --> A';
+  assert.equal(deleteStateEdge(source, 1), 'stateDiagram-v2\n  [*] --> A\n  B --> A');
+  assert.equal(deleteStateEdge(source, 0), 'stateDiagram-v2\n  A --> B\n  B --> A');
+});
+
+test('deleteStateEdge is a no-op for an out-of-range or missing index', () => {
+  const source = 'stateDiagram-v2\n  A --> B';
+  assert.equal(deleteStateEdge(source, 5), source);
+  assert.equal(deleteStateEdge(source, null), source);
+});
+
+test('parseClassIds finds declared classes and relationship endpoints', () => {
+  const source = 'classDiagram\n  class Animal\n  class Dog\n  Animal <|-- Dog';
+  assert.deepEqual(parseClassIds(source).sort(), ['Animal', 'Dog']);
+});
+
+test('readClassEdge / deleteClassEdge / setClassEdge round-trip a class relationship', () => {
+  const source = 'classDiagram\n  class Animal\n  class Dog\n  Animal <|-- Dog';
+  assert.deepEqual(readClassEdge(source, 'Animal', 'Dog'), { arrowId: 'inheritance', label: '' });
+  assert.equal(deleteClassEdge(source, 'Animal', 'Dog'), 'classDiagram\n  class Animal\n  class Dog');
+  assert.equal(
+    setClassEdge(source, 'Animal', 'Dog', 'composition', 'has-a'),
+    'classDiagram\n  class Animal\n  class Dog\nAnimal *-- Dog : has-a'
+  );
+});
+
+test('readErEdge / deleteErEdge / setErEdge round-trip an ER relationship, defaulting a cleared label', () => {
+  const source = 'erDiagram\n  CUSTOMER ||--o{ ORDER : places';
+  assert.deepEqual(readErEdge(source, 'CUSTOMER', 'ORDER'), { arrowId: 'one-to-many', label: 'places' });
+  assert.equal(deleteErEdge(source, 'CUSTOMER', 'ORDER'), 'erDiagram');
+  assert.equal(
+    setErEdge(source, 'CUSTOMER', 'ORDER', 'one-to-one', ''),
+    'erDiagram\nCUSTOMER ||--|| ORDER : relates to'
+  );
 });

@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { VidFullScreenOnIcon, VidFullScreenOffIcon } from './icons';
 import { isDarkMermaidTheme } from './mermaid-renderer';
-import { extractClickedNodeId, extractClickedEdgeId } from './svg-node-id';
+import {
+  extractClickedNodeId,
+  extractClickedEdgeId,
+  extractClickedClassEdgeId,
+  extractClickedErEdgeId,
+  extractClickedStateEdgeIndex,
+} from './svg-node-id';
 
 const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.2;
@@ -37,24 +43,34 @@ export default function DiagramCanvas({
   theme = 'default',
   onNodeClick,
   selectedNode,
-  // Whether click/drag-to-connect is available for this diagram at all —
-  // App.jsx passes true only in edit mode for a diagram type
-  // diagram-connect.js's isConnectable() recognizes (flowchart only, for
-  // now). When false, none of the hover-dot/drag machinery below even
-  // attaches — same "don't render controls a diagram type can't use"
-  // convention as the per-node style popover.
-  connectable = false,
+  // What the connect gesture can offer for this diagram's source right now
+  // — diagram-connect.js's resolveConnectKind() result, or null. Node
+  // hover/drag/click-click detection below works identically for every
+  // supported kind (every node group shares the plain `.node` CSS class
+  // regardless of diagram type), so connectKind only needs branching for
+  // edge *click* detection, which uses a different CSS selector and id
+  // scheme per kind (see handleNodeClick). When null, none of the
+  // hover-dot/drag machinery attaches at all — same "don't render controls
+  // a diagram type can't use" convention as the per-node style popover.
+  connectKind = null,
+  // The diagram's own declared class names (diagram-connect.js's
+  // parseClassIds) — only meaningful when connectKind.kind === 'class',
+  // needed to disambiguate a clicked class-relationship's two endpoints
+  // (see extractClickedClassEdgeId).
+  knownIds,
   // Called with (fromNodeId, toNodeId) once a connect gesture completes
   // against a valid, different target node.
   onConnect,
-  // Called with (fromNodeId, toNodeId) when a flowchart edge is clicked —
-  // App.jsx deletes it immediately (with an undo banner) rather than this
-  // component needing its own confirmation UI. Only wired up when
-  // connectable is true, same scope as the connect gesture itself (see
-  // extractClickedEdgeId's own comment for why edge deletion specifically
-  // can't extend to state/class/ER as easily as node connect can).
+  // Called with `{ kind, fromId, toId, rect }` (or, for state diagrams,
+  // `{ kind: 'state', edgeIndex, rect }` — state edges carry no endpoint
+  // info in their DOM id at all, see extractClickedStateEdgeIndex) when an
+  // existing edge/relationship/transition is clicked. App.jsx opens the
+  // edge popover from this rather than deleting immediately, so the user
+  // can restyle (class/ER) or delete from one place. Only wired up when
+  // connectKind is set, same scope as the connect gesture itself.
   onEdgeClick,
 }) {
+  const connectable = !!connectKind;
   const wrapRef = useRef(null);
   const containerRef = useRef(null);
   const svgElRef = useRef(null);
@@ -435,13 +451,31 @@ export default function DiagramCanvas({
       return;
     }
 
-    // Not a node — check whether it's a flowchart edge instead (arrow
-    // deletion). connectable-gated: same scope as the connect gesture
-    // itself, since extractClickedEdgeId only resolves flowchart edges.
-    if (connectable && onEdgeClick) {
-      const edgeTarget = downTarget.closest('.flowchart-link[id]');
-      const resolvedEdge = edgeTarget && extractClickedEdgeId(edgeTarget.getAttribute('id'));
-      if (resolvedEdge) onEdgeClick(resolvedEdge.fromId, resolvedEdge.toId);
+    // Not a node — check whether it's an edge/relationship/transition
+    // instead (opens the edge popover). Each diagram kind renders edges
+    // under a different CSS class and DOM id scheme (confirmed via jsdom
+    // scratch render), so both the selector and the id-extraction function
+    // are picked per connectKind.kind rather than one shared attempt.
+    if (connectKind && onEdgeClick) {
+      let edgeTarget = null;
+      let resolvedEdge = null;
+      if (connectKind.kind === 'flowchart') {
+        edgeTarget = downTarget.closest('.flowchart-link[id]');
+        resolvedEdge = edgeTarget && extractClickedEdgeId(edgeTarget.getAttribute('id'));
+      } else if (connectKind.kind === 'state') {
+        edgeTarget = downTarget.closest('.transition[id]');
+        const edgeIndex = edgeTarget && extractClickedStateEdgeIndex(edgeTarget.getAttribute('id'));
+        resolvedEdge = edgeIndex != null ? { edgeIndex } : null;
+      } else if (connectKind.kind === 'class') {
+        edgeTarget = downTarget.closest('.relation[id]');
+        resolvedEdge = edgeTarget && extractClickedClassEdgeId(edgeTarget.getAttribute('id'), knownIds);
+      } else if (connectKind.kind === 'er') {
+        edgeTarget = downTarget.closest('.relationshipLine[id]');
+        resolvedEdge = edgeTarget && extractClickedErEdgeId(edgeTarget.getAttribute('id'));
+      }
+      if (resolvedEdge && edgeTarget) {
+        onEdgeClick({ kind: connectKind.kind, ...resolvedEdge, rect: edgeTarget.getBoundingClientRect() });
+      }
     }
   }
 

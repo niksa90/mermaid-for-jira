@@ -26,7 +26,19 @@ import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
 import { resolveNodeStyleKind } from '../../../src/node-style-kind';
 import { resolvePaletteKind } from '../../../src/diagram-palette';
-import { isConnectable, connectNodes, deleteEdge } from '../../../src/diagram-connect';
+import {
+  resolveConnectKind,
+  connectNodes,
+  parseClassIds,
+  deleteFlowchartEdge,
+  deleteStateEdge,
+  readClassEdge,
+  deleteClassEdge,
+  setClassEdge,
+  readErEdge,
+  deleteErEdge,
+  setErEdge,
+} from '../../../src/diagram-connect';
 import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
 // text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
@@ -35,6 +47,22 @@ import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // font payload for a weight most diagram text never uses.
 import '@fontsource/inter/400.css';
 import './styles.css';
+
+// Shared by both the node-style popover and the edge popover below: clamps
+// a popover's `top` (position: fixed, viewport px) fully into the iframe's
+// own viewport given the clicked element's rect and the popover's own
+// rendered height — preferring just below the click, falling back above,
+// and clamping into range if neither side has room. See nodePopover's
+// popoverTop state comment for the bug this specifically fixes (a
+// bottom-row node's popover getting clipped by the iframe's bottom edge).
+function clampPopoverTop(rect, popoverHeight) {
+  const margin = 8;
+  const belowTop = rect.bottom + margin;
+  const aboveTop = rect.top - margin - popoverHeight;
+  if (belowTop + popoverHeight <= window.innerHeight - margin) return belowTop;
+  if (aboveTop >= margin) return aboveTop;
+  return Math.min(Math.max(margin, belowTop), Math.max(margin, window.innerHeight - popoverHeight - margin));
+}
 
 const SAVE_DEBOUNCE_MS = 600;
 // A native <input type="color"> fires onChange continuously while its
@@ -216,6 +244,24 @@ export default function App() {
   // popoverHeight - 8] so the popover is guaranteed to stay fully
   // on-screen rather than committing to whichever side "sounds" better.
   const [popoverTop, setPopoverTop] = useState(0);
+  // The edge popover: opened by clicking an existing edge/relationship/
+  // transition (any connect-supported diagram kind), offering an
+  // arrow-style/cardinality picker (class/ER only — see
+  // diagram-connect.js's resolveConnectKind), a label field (ER only,
+  // mandatory in Mermaid's own syntax; optional for class), and a Delete
+  // button. Shape mirrors nodePopover above: { diagramId, kind, fromId,
+  // toId, rect } for flowchart/class/ER, or { diagramId, kind: 'state',
+  // edgeIndex, rect } for state (see extractClickedStateEdgeIndex for why
+  // state identifies its edges positionally instead of by endpoint). Kept
+  // as its own independent popover rather than folded into nodePopover's
+  // shape — the two represent genuinely different things (a node vs. a
+  // connector between two nodes) with different available actions.
+  const [edgePopover, setEdgePopover] = useState(null);
+  const edgePopoverRef = useRef(null);
+  const [edgePopoverTop, setEdgePopoverTop] = useState(0);
+  // Local draft for the edge popover's label input — see the sync effect
+  // below for why this isn't bound directly to the source text.
+  const [edgeLabelDraft, setEdgeLabelDraft] = useState('');
   // Whether the panel is effectively rendering in dark mode (see
   // resolveEffectiveDark) — used only to pick a new diagram's starting
   // Mermaid theme (see addDiagram); never re-applied to existing diagrams.
@@ -347,24 +393,37 @@ export default function App() {
   // popover would visibly flash at the clipped position first.
   useLayoutEffect(() => {
     if (!nodePopover || !nodePopoverRef.current) return;
-    const { rect } = nodePopover;
-    const margin = 8;
-    const popoverHeight = nodePopoverRef.current.getBoundingClientRect().height;
-    const belowTop = rect.bottom + margin;
-    const aboveTop = rect.top - margin - popoverHeight;
-    let top;
-    if (belowTop + popoverHeight <= window.innerHeight - margin) {
-      top = belowTop; // preferred: matches the original always-below behavior
-    } else if (aboveTop >= margin) {
-      top = aboveTop; // below doesn't fit; above does
-    } else {
-      // Neither side has enough room (short canvas / a popover taller than
-      // either gap) — clamp fully into the viewport instead of picking a
-      // side that would still clip one edge or the other.
-      top = Math.min(Math.max(margin, belowTop), Math.max(margin, window.innerHeight - popoverHeight - margin));
-    }
-    setPopoverTop(top);
+    setPopoverTop(clampPopoverTop(nodePopover.rect, nodePopoverRef.current.getBoundingClientRect().height));
   }, [nodePopover]);
+
+  // Same clamped-into-viewport positioning as the node-style popover above,
+  // for the edge popover (arrow-style/label picker + Delete) opened by
+  // clicking an existing edge/relationship/transition.
+  useLayoutEffect(() => {
+    if (!edgePopover || !edgePopoverRef.current) return;
+    setEdgePopoverTop(clampPopoverTop(edgePopover.rect, edgePopoverRef.current.getBoundingClientRect().height));
+  }, [edgePopover]);
+
+  // Seeds the label-editing draft from whatever's currently in the source
+  // whenever the edge popover opens (or its target edge changes) — plain
+  // useState + sync-on-open, not a live binding straight to source, so
+  // keystrokes don't fire a save (or re-render the diagram) on every
+  // character; committed on blur, same pattern as the Section field (see
+  // CLAUDE.md's Section-input gotcha) and for the same reason: this data
+  // feeds back into the source text the popover itself is reading from.
+  useEffect(() => {
+    if (!edgePopover) return;
+    const diagram = latestDiagramsRef.current.find((d) => d.id === edgePopover.diagramId);
+    if (!diagram) return;
+    const info =
+      edgePopover.kind === 'class'
+        ? readClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
+        : edgePopover.kind === 'er'
+          ? readErEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
+          : null;
+    setEdgeLabelDraft(info?.label || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edgePopover]);
 
   // Closes the click-to-style popover on Escape or on any pointerdown
   // outside it — including the pointerdown that starts panning the canvas
@@ -373,14 +432,20 @@ export default function App() {
   // handler, and before a click on a *different* node reopens the popover
   // there via onNodeClick.
   useEffect(() => {
-    if (!nodePopover) return undefined;
+    if (!nodePopover && !edgePopover) return undefined;
     function onDocPointerDown(e) {
-      if (nodePopoverRef.current && !nodePopoverRef.current.contains(e.target)) {
+      if (nodePopover && nodePopoverRef.current && !nodePopoverRef.current.contains(e.target)) {
         setNodePopover(null);
+      }
+      if (edgePopover && edgePopoverRef.current && !edgePopoverRef.current.contains(e.target)) {
+        setEdgePopover(null);
       }
     }
     function onKeyDown(e) {
-      if (e.key === 'Escape') setNodePopover(null);
+      if (e.key === 'Escape') {
+        setNodePopover(null);
+        setEdgePopover(null);
+      }
     }
     document.addEventListener('pointerdown', onDocPointerDown, true);
     document.addEventListener('keydown', onKeyDown);
@@ -388,7 +453,7 @@ export default function App() {
       document.removeEventListener('pointerdown', onDocPointerDown, true);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [nodePopover]);
+  }, [nodePopover, edgePopover]);
 
   // Flush any pending debounced save if the panel closes mid-edit.
   useEffect(
@@ -603,25 +668,52 @@ export default function App() {
     persist(restored, { immediate: true });
   }
 
-  // Deletes a flowchart edge immediately (DiagramCanvas's click-to-delete),
-  // same "act now, offer Undo" pattern as confirmRemove/undoRemove above,
-  // rather than a confirmation dialog before the delete happens.
-  function handleEdgeClick(diagramId, fromId, toId) {
-    const diagram = latestDiagramsRef.current.find((d) => d.id === diagramId);
+  // Opens the edge popover for a clicked edge/relationship/transition —
+  // restyling and deletion both happen from within the popover itself (see
+  // renderEdgePopover), not immediately on click. This replaces the
+  // flowchart-only instant-delete-on-click this app shipped with
+  // originally: once class/ER relationships needed a style choice at
+  // click time (not just delete), a consistent "click opens options" model
+  // across every connect-supported diagram type was worth the small extra
+  // click flowchart deletion now takes, rather than flowchart staying a
+  // special case.
+  function openEdgePopover(diagramId, edgeInfo) {
+    setNodePopover(null);
+    setEdgePopover({ diagramId, ...edgeInfo });
+  }
+
+  // Deletes whichever edge the edge popover is currently open on, same
+  // "act now, offer Undo" pattern as confirmRemove/undoRemove above rather
+  // than a confirmation dialog before the delete happens. Dispatches to the
+  // right diagram-connect.js delete function by kind — state identifies its
+  // edge positionally (edgeIndex), every other kind by its two endpoints.
+  function deleteCurrentEdge() {
+    if (!edgePopover) return;
+    const diagram = latestDiagramsRef.current.find((d) => d.id === edgePopover.diagramId);
     if (!diagram) return;
-    const nextSource = deleteEdge(diagram.source, fromId, toId);
-    // deleteEdge no-ops (returns the same string) if it didn't recognize
-    // the edge as a single whole line — nothing to delete or undo.
+    let nextSource = diagram.source;
+    if (edgePopover.kind === 'flowchart') {
+      nextSource = deleteFlowchartEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+    } else if (edgePopover.kind === 'state') {
+      nextSource = deleteStateEdge(diagram.source, edgePopover.edgeIndex);
+    } else if (edgePopover.kind === 'class') {
+      nextSource = deleteClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+    } else if (edgePopover.kind === 'er') {
+      nextSource = deleteErEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+    }
+    setEdgePopover(null);
+    // A no-op delete (source unchanged — the edge line wasn't in a shape
+    // this app's best-effort parser recognized) has nothing to undo.
     if (nextSource === diagram.source) return;
 
     if (edgeUndoTimeoutRef.current) clearTimeout(edgeUndoTimeoutRef.current);
-    setEdgeUndoState({ diagramId, prevSource: diagram.source });
+    setEdgeUndoState({ diagramId: diagram.id, prevSource: diagram.source });
     edgeUndoTimeoutRef.current = setTimeout(() => {
       edgeUndoTimeoutRef.current = null;
       setEdgeUndoState(null);
     }, UNDO_TIMEOUT_MS);
 
-    updateDiagram(diagramId, { source: nextSource }, { immediate: true });
+    updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
   }
 
   function undoEdgeDelete() {
@@ -885,6 +977,109 @@ export default function App() {
     );
   }
 
+  // The edge popover: opened by clicking an existing edge/relationship/
+  // transition in any connect-supported diagram (see openEdgePopover).
+  // Offers an arrow-style/cardinality picker for class and ER (the two
+  // kinds with more than one meaningful relationship type — see
+  // resolveConnectKind), a label field for ER (mandatory in Mermaid's own
+  // syntax) and class (optional), and a Delete button for every kind,
+  // including flowchart/state which have neither picker — this replaces
+  // flowchart's old instant-delete-on-click (see openEdgePopover's comment
+  // for why that changed).
+  function renderEdgePopover() {
+    if (!edgePopover) return null;
+    const diagram = diagrams.find((d) => d.id === edgePopover.diagramId);
+    if (!diagram) return null;
+    const connectKind = resolveConnectKind(diagram.source);
+    // Same "outlived a source edit" guard as renderNodePopover — closes
+    // silently rather than operating on a stale edge reference.
+    if (!connectKind || connectKind.kind !== edgePopover.kind) return null;
+
+    const current =
+      connectKind.kind === 'class'
+        ? readClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
+        : connectKind.kind === 'er'
+          ? readErEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
+          : null;
+    // The edge itself no longer exists on this exact line (source was
+    // hand-edited out from under the popover) — nothing left to show.
+    if (connectKind.arrowOptions && !current) return null;
+
+    function applyArrow(arrowId) {
+      const setEdge = connectKind.kind === 'class' ? setClassEdge : setErEdge;
+      updateDiagram(
+        diagram.id,
+        { source: setEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, edgeLabelDraft) },
+        { immediate: true }
+      );
+    }
+
+    function commitLabel() {
+      if (!current) return;
+      const setEdge = connectKind.kind === 'class' ? setClassEdge : setErEdge;
+      updateDiagram(
+        diagram.id,
+        { source: setEdge(diagram.source, edgePopover.fromId, edgePopover.toId, current.arrowId, edgeLabelDraft) },
+        { immediate: true }
+      );
+      flushSave();
+    }
+
+    const style = {
+      left: Math.max(8, edgePopover.rect.left + edgePopover.rect.width / 2),
+      top: edgePopoverTop,
+    };
+    const title =
+      connectKind.kind === 'state' ? 'Transition' : `${edgePopover.fromId} → ${edgePopover.toId}`;
+
+    return (
+      <div className="node-style-popover" ref={edgePopoverRef} style={style}>
+        <div className="node-style-popover-header">
+          <span className="node-style-popover-title">{title}</span>
+          <button
+            type="button"
+            className="btn btn-subtle btn-icon node-style-popover-close"
+            aria-label="Close arrow popover"
+            onClick={() => setEdgePopover(null)}
+          >
+            ×
+          </button>
+        </div>
+        {connectKind.arrowOptions && (
+          <div className="node-style-popover-row">
+            <span className="node-style-popover-label">Type</span>
+            <select className="select-input" value={current.arrowId} onChange={(e) => applyArrow(e.target.value)}>
+              {connectKind.arrowOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {connectKind.arrowOptions && (
+          <div className="node-style-popover-row">
+            <span className="node-style-popover-label">Label</span>
+            <input
+              type="text"
+              className="text-input"
+              value={edgeLabelDraft}
+              onChange={(e) => setEdgeLabelDraft(e.target.value)}
+              onBlur={commitLabel}
+              placeholder={connectKind.needsLabel ? 'Required' : 'Optional'}
+            />
+          </div>
+        )}
+        <button type="button" className="btn btn-subtle node-style-popover-reset" onClick={deleteCurrentEdge}>
+          <span className="node-style-popover-reset-icon" aria-hidden="true">
+            ✕
+          </span>
+          Delete arrow
+        </button>
+      </div>
+    );
+  }
+
   function renderDiagramCard(diagram) {
     const mode = modes[diagram.id] || 'display';
     const isCollapsed = mode === 'display' && !!collapsed[diagram.id];
@@ -1095,15 +1290,24 @@ export default function App() {
                     onError={(err) =>
                       setParseErrorLines((prev) => ({ ...prev, [diagram.id]: err?.line ?? null }))
                     }
-                    connectable={isConnectable(diagram.source)}
+                    connectKind={resolveConnectKind(diagram.source)}
+                    knownIds={parseClassIds(diagram.source)}
                     onConnect={(fromId, toId) =>
+                      // connectNodes picks the right syntax (and, for
+                      // class/ER, a sensible default arrow/cardinality —
+                      // see resolveConnectKind) from diagram.source itself,
+                      // so this call site doesn't need to branch on kind.
+                      // Restyling the new edge (arrow type, ER's label)
+                      // is one click away afterward, same as any other
+                      // existing edge — the connect gesture itself stays a
+                      // single drag/click-click either way.
                       updateDiagram(
                         diagram.id,
                         { source: connectNodes(diagram.source, fromId, toId) },
                         { immediate: true }
                       )
                     }
-                    onEdgeClick={(fromId, toId) => handleEdgeClick(diagram.id, fromId, toId)}
+                    onEdgeClick={(edgeInfo) => openEdgePopover(diagram.id, edgeInfo)}
                   />
                 </DiagramErrorBoundary>
               </div>
@@ -1242,6 +1446,7 @@ export default function App() {
         )}
       </div>
       {renderNodePopover()}
+      {renderEdgePopover()}
     </div>
   );
 }

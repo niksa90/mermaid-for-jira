@@ -1,6 +1,7 @@
 // Maps a rendered SVG node <g>'s own `id` attribute back to the
-// diagram-kind + source node/state/entity id it came from, for the
-// click-on-the-bubble style popover (DiagramCanvas.jsx).
+// diagram-kind + source node/state/entity/class id it came from, for the
+// click-on-the-bubble style popover and the click/drag-to-connect gesture
+// (DiagramCanvas.jsx).
 //
 // Verified against real mermaid@11.16.0 output via a jsdom scratch render
 // (not assumed from docs), the same verification convention as everything
@@ -8,19 +9,19 @@
 // `<renderId>-<marker>-<sourceId>-<counter>`, where `<renderId>` is the id
 // passed into mermaid.render() (see safeDiagramId in mermaid-renderer.js)
 // and marker is 'flowchart' for flowchart nodes, 'state' for state-diagram
-// states, and 'entity' for ER entities. `<renderId>` can itself contain
-// hyphens (it's built from Date.now()-derived diagram ids), so the marker
-// token is located by substring search rather than a generic split on '-'.
+// states, 'entity' for ER entities, and 'classId' for class-diagram
+// classes. `<renderId>` can itself contain hyphens (it's built from
+// Date.now()-derived diagram ids), so the marker token is located by
+// substring search rather than a generic split on '-'.
 //
-// Only these three markers exist because only these three diagram types
-// have a per-element style mechanism at all (see node-style-kind.js) — a
-// click on a sequence/pie/gantt/kanban/mindmap element (or on an edge/label
+// A click on a sequence/pie/gantt/kanban/mindmap element (or on a label
 // within any diagram) simply won't match any marker, and callers should
-// treat that as "nothing to style here", not an error.
+// treat that as "nothing to style/connect here", not an error.
 const MARKERS = [
   { marker: 'flowchart', kind: 'flowchart' },
   { marker: 'state', kind: 'state' },
   { marker: 'entity', kind: 'er' },
+  { marker: 'classId', kind: 'class' },
 ];
 
 /**
@@ -75,4 +76,73 @@ export function extractClickedEdgeId(domId) {
   const fromId = withoutCounter.slice(0, underscoreIdx);
   const toId = withoutCounter.slice(underscoreIdx + 1);
   return fromId && toId ? { fromId, toId } : null;
+}
+
+/**
+ * Returns `{ fromId, toId }` for a clicked class-diagram relationship's DOM
+ * id, or `null`. Mermaid emits these as
+ * `<renderId>-id_<fromId>_<toId>_<counter>` (confirmed via jsdom scratch
+ * render) — unlike flowchart's `-L_`, there's no token separating fromId
+ * from toId, so `knownClassIds` (the diagram's own declared class names,
+ * from diagram-connect.js's parseClassIds) is required to find the correct
+ * split point. Best-effort: if more than one split matches (e.g. two
+ * declared classes whose names make either split valid) or none does,
+ * returns null rather than guessing — same "doesn't cover every possible
+ * hand-typed id" tradeoff as extractClickedEdgeId above.
+ */
+export function extractClickedClassEdgeId(domId, knownClassIds) {
+  if (!domId) return null;
+  const token = '-id_';
+  const idx = domId.indexOf(token);
+  if (idx === -1) return null;
+  const rest = domId.slice(idx + token.length).replace(/_\d+$/, '');
+  const known = new Set(knownClassIds || []);
+  const parts = rest.split('_');
+  const matches = [];
+  for (let i = 1; i < parts.length; i += 1) {
+    const fromId = parts.slice(0, i).join('_');
+    const toId = parts.slice(i).join('_');
+    if (known.has(fromId) && known.has(toId)) matches.push({ fromId, toId });
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * Returns `{ fromId, toId }` for a clicked ER relationship's DOM id, or
+ * `null`. Mermaid emits these as
+ * `<renderId>-id_entity-<FromName>-<n>_entity-<ToName>-<m>_<counter>` —
+ * each endpoint is itself a full per-node rendered id fragment (see the
+ * 'entity' marker above), not the bare entity name, joined by the literal
+ * token `_entity-` (confirmed via jsdom scratch render) — splitting on that
+ * exact token is reliable even when an entity name itself contains a
+ * hyphen (e.g. "LINE-ITEM"), unlike the class case above.
+ */
+export function extractClickedErEdgeId(domId) {
+  if (!domId) return null;
+  const token = '-id_';
+  const idx = domId.indexOf(token);
+  if (idx === -1) return null;
+  const rest = domId.slice(idx + token.length).replace(/_\d+$/, '');
+  const splitToken = '_entity-';
+  const splitIdx = rest.indexOf(splitToken);
+  if (splitIdx === -1) return null;
+  const fromChunk = rest.slice(0, splitIdx);
+  const toChunk = `entity-${rest.slice(splitIdx + splitToken.length)}`;
+  const fromName = fromChunk.match(/^entity-(.+)-\d+$/)?.[1];
+  const toName = toChunk.match(/^entity-(.+)-\d+$/)?.[1];
+  return fromName && toName ? { fromId: fromName, toId: toName } : null;
+}
+
+/**
+ * Returns the 0-based transition index for a clicked state-diagram edge's
+ * DOM id (`<renderId>-edge<N>`), or `null`. Unlike flowchart/class/ER,
+ * state edges carry no endpoint info at all in their id (confirmed via
+ * jsdom scratch render — `data-id` is a bare `edge0`/`edge1`/...) — this
+ * positional index is matched against the Nth transition line in source
+ * order instead (see diagram-connect.js's deleteStateEdge).
+ */
+export function extractClickedStateEdgeIndex(domId) {
+  if (!domId) return null;
+  const match = domId.match(/-edge(\d+)$/);
+  return match ? Number(match[1]) : null;
 }
