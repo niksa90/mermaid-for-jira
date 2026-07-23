@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getNodeIcon, setNodeIcon, QUICK_ICONS } from './node-label.js';
+import { getNodeIcon, setNodeIcon, QUICK_ICONS, getNodeLabelText, setNodeLabelText } from './node-label.js';
 
 test('getNodeIcon returns empty for a node with no label icon', () => {
   const source = 'flowchart TD\n  A[Start] --> B[End]';
@@ -101,4 +101,36 @@ test('setNodeIcon clears an icon from an @{shape:...} label without disturbing t
   const source = 'flowchart TD\n  E@{ shape: rect, label: "🚀 Process" }';
   const next = setNodeIcon(source, 'E', '');
   assert.equal(next, 'flowchart TD\n  E@{ shape: rect, label: "Process" }');
+});
+
+// getNodeLabelText / setNodeLabelText: the double-click-to-edit-text
+// gesture's flowchart backend. Same three-tier dispatch as setNodeIcon
+// (bracket shape, @{...} shape, synthesize-or-no-op), but a full replace
+// rather than a prefix merge.
+test('getNodeLabelText reads a bracket label, empty string for no shape/label at all', () => {
+  assert.equal(getNodeLabelText('flowchart TD\n  A[Start] --> B[End]', 'A'), 'Start');
+  assert.equal(getNodeLabelText('flowchart TD\n  A --> B', 'A'), '');
+});
+
+test('setNodeLabelText fully replaces a bracket label, including a previously-set icon', () => {
+  const source = 'flowchart TD\n  A[🚀 Start] --> B[End]';
+  assert.equal(setNodeLabelText(source, 'A', 'Kickoff'), 'flowchart TD\n  A[Kickoff] --> B[End]');
+});
+
+test('setNodeLabelText synthesizes a new label for an edge-only node with no shape at all', () => {
+  assert.equal(setNodeLabelText('flowchart TD\n  A --> B', 'A', 'Begin'), 'flowchart TD\n  A --> B\nA[Begin]');
+});
+
+test('setNodeLabelText is a no-op for an unrecognized doubled-bracket shape, and for an empty text with no shape to synthesize onto', () => {
+  assert.equal(setNodeLabelText('flowchart TD\n  A((Circle))', 'A', 'x'), 'flowchart TD\n  A((Circle))');
+  assert.equal(setNodeLabelText('flowchart TD\n  A --> B', 'A', ''), 'flowchart TD\n  A --> B');
+});
+
+test('getNodeLabelText / setNodeLabelText round-trip an @{shape:...} declaration, preserving the shape property', () => {
+  const source = 'flowchart TD\n  E@{ shape: rect, label: "Process" }';
+  assert.equal(getNodeLabelText(source, 'E'), 'Process');
+  assert.equal(
+    setNodeLabelText(source, 'E', 'Handle request'),
+    'flowchart TD\n  E@{ shape: rect, label: "Handle request" }'
+  );
 });

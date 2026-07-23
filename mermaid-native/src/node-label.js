@@ -1,14 +1,15 @@
-// Pure helpers for the per-node icon picker: reads/writes a leading emoji
-// on a flowchart node's bracket-declared label text (e.g. `A[🚀 Deploy]`).
+// Pure helpers for flowchart node labels: reads/writes a leading emoji (the
+// per-node icon picker) or the full label text (the double-click-to-edit
+// gesture — see node-text.js's dispatcher) on a node's bracket-declared or
+// Mermaid v11 unified `@{...}`-declared label.
 //
 // Flowchart-only for now (mirrors this project's usual "one diagram type
 // first, verify, then extend" pattern — see node-style.js/state-style.js/
 // er-style.js's own history). State diagrams and ER entities don't have an
-// equivalent free-text label to prepend an icon to without bigger,
-// diagram-type-specific rewrites (a state's displayed text is either its
-// bare id or a separate `state "desc" as Id`/`Id : desc` form; an ER
-// entity's displayed text is just its id, with no separate label syntax at
-// all) — deferred rather than guessed at.
+// equivalent free-text label — state's own text-editing lives in
+// state-style.js instead (a genuinely different mechanism: a separate
+// `state "desc" as Id`/`Id : desc` form, not a bracket label), and ER has
+// no label mechanism at all (see node-text.js's header comment).
 //
 // Emoji survive Mermaid's parse/render/DOMPurify pipeline as plain SVG
 // text content unmodified — confirmed via a jsdom scratch render against
@@ -161,4 +162,49 @@ export function setNodeIcon(source, nodeId, icon) {
 
   const withoutTrailingBlank = lines.length && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
   return [...withoutTrailingBlank, `${nodeId}[${icon}]`].join('\n');
+}
+
+/** The node's current full label text (bracket or `@{...}` label), or '' if it has no shape/label declaration at all. */
+export function getNodeLabelText(source, nodeId) {
+  const lines = (source || '').split('\n');
+  const found = findLabelLine(lines, nodeId) || findAtShapeLabelLine(lines, nodeId);
+  return found ? found.text : '';
+}
+
+/**
+ * Sets the node's full label text, for the double-click-to-edit gesture.
+ * Same three-tier fallback as setNodeIcon (bracket shape, then `@{...}`
+ * shape, then — for a node with no shape declaration at all — synthesize a
+ * new `NodeId[text]` line; a node with an unrecognized doubled-bracket
+ * shape is a no-op). Unlike setNodeIcon, this fully replaces the existing
+ * text (including any icon prefix) rather than merging with it — retyping
+ * the whole label is a deliberate full replace; re-adding an icon
+ * afterward is one click away via the icon picker.
+ */
+export function setNodeLabelText(source, nodeId, text) {
+  const lines = (source || '').split('\n');
+  const found = findLabelLine(lines, nodeId);
+  if (found) {
+    const replacement = `${found.boundary}${nodeId}${found.shape.open}${text}${found.shape.close}`;
+    const line = lines[found.index];
+    lines[found.index] =
+      line.slice(0, found.matchStart) + replacement + line.slice(found.matchStart + found.fullMatch.length);
+    return lines.join('\n');
+  }
+
+  const atShape = findAtShapeLabelLine(lines, nodeId);
+  if (atShape) {
+    const newProps = replaceAtShapeLabel(atShape.propsText, text);
+    const replacement = `${atShape.boundary}${nodeId}@{${newProps}}`;
+    const line = lines[atShape.index];
+    lines[atShape.index] =
+      line.slice(0, atShape.matchStart) + replacement + line.slice(atShape.matchStart + atShape.fullMatch.length);
+    return lines.join('\n');
+  }
+
+  if (!text) return source || '';
+  if (hasAnyShapeDeclaration(lines, nodeId)) return source || '';
+
+  const withoutTrailingBlank = lines.length && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
+  return [...withoutTrailingBlank, `${nodeId}[${text}]`].join('\n');
 }

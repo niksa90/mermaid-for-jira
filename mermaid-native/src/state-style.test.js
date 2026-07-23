@@ -5,6 +5,8 @@ import {
   parseStateIds,
   parseStateStyles,
   upsertStateStyle,
+  getStateLabelText,
+  setStateLabelText,
 } from './state-style.js';
 
 test('isStateDiagramSource recognizes both stateDiagram and stateDiagram-v2', () => {
@@ -108,3 +110,42 @@ test('upsertStateStyle supports the stroke-width (border width) channel', () => 
 // so it can't be cross-imported here) — confirmed stateDiagram-v2 rejects
 // flowchart-style `style StateId fill:...` outright but accepts
 // classDef/class, which is why this module uses that mechanism instead.
+
+// getStateLabelText / setStateLabelText: the double-click-to-edit-text
+// gesture's state-diagram backend, covering both real syntax forms
+// (confirmed via a jsdom scratch render of the real mermaid parser — an
+// empty quoted alias, `state "" as Id`, is a parse error, unlike ER's empty
+// quoted relationship label).
+test('getStateLabelText reads an alias or a colon-description, empty string for neither', () => {
+  assert.equal(getStateLabelText('stateDiagram-v2\n  state "Long Name" as s1\n  s1 --> s2', 's1'), 'Long Name');
+  assert.equal(getStateLabelText('stateDiagram-v2\n  s2 : Short description\n  s1 --> s2', 's2'), 'Short description');
+  assert.equal(getStateLabelText('stateDiagram-v2\n  A --> B', 'A'), '');
+});
+
+test('setStateLabelText rewrites an existing alias in place', () => {
+  const source = 'stateDiagram-v2\n  state "Long Name" as s1\n  s1 --> s2';
+  assert.equal(
+    setStateLabelText(source, 's1', 'New Name'),
+    'stateDiagram-v2\n  state "New Name" as s1\n  s1 --> s2'
+  );
+});
+
+test('setStateLabelText rewrites an existing colon-description in place', () => {
+  const source = 'stateDiagram-v2\n  s2 : Short description\n  s1 --> s2';
+  assert.equal(setStateLabelText(source, 's2', 'New description'), 'stateDiagram-v2\n  s2 : New description\n  s1 --> s2');
+});
+
+test('setStateLabelText synthesizes a new colon-description line for a state with neither form yet', () => {
+  const source = 'stateDiagram-v2\n  A --> B';
+  assert.equal(setStateLabelText(source, 'A', 'Idle'), 'stateDiagram-v2\n  A --> B\nA : Idle');
+});
+
+test('setStateLabelText clears an alias by removing the line entirely, not writing an invalid empty-quoted alias', () => {
+  const source = 'stateDiagram-v2\n  state "Long Name" as s1\n  s1 --> s2';
+  assert.equal(setStateLabelText(source, 's1', ''), 'stateDiagram-v2\n  s1 --> s2');
+});
+
+test('setStateLabelText clears a colon-description by removing the line entirely', () => {
+  const source = 'stateDiagram-v2\n  s2 : Short description\n  s1 --> s2';
+  assert.equal(setStateLabelText(source, 's2', ''), 'stateDiagram-v2\n  s1 --> s2');
+});
