@@ -28,7 +28,22 @@ function clamp(value, min, max) {
  * into presentation attributes instead of a <style> block). viewBox is a
  * plain SVG attribute, so it isn't affected.
  */
-export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, selectedNode }) {
+export default function DiagramCanvas({
+  svg,
+  theme = 'default',
+  onNodeClick,
+  selectedNode,
+  // Whether click/drag-to-connect is available for this diagram at all —
+  // App.jsx passes true only in edit mode for a diagram type
+  // diagram-connect.js's isConnectable() recognizes (flowchart only, for
+  // now). When false, none of the hover-dot/drag machinery below even
+  // attaches — same "don't render controls a diagram type can't use"
+  // convention as the per-node style popover.
+  connectable = false,
+  // Called with (fromNodeId, toNodeId) once a connect gesture completes
+  // against a valid, different target node.
+  onConnect,
+}) {
   const wrapRef = useRef(null);
   const containerRef = useRef(null);
   const svgElRef = useRef(null);
@@ -43,6 +58,29 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
   // tick — this is the one place that *does* need a render, so it's tracked
   // separately rather than promoting those refs to state wholesale).
   const [zoomPercent, setZoomPercent] = useState(100);
+  // Click/drag-to-connect (diagram-connect.js's connectNodes). Kept
+  // entirely separate from dragRef/pan state above rather than threaded
+  // through it — the two gestures start from different elements (the
+  // container vs. a small connect-handle overlay) and mixing their state
+  // machines is where subtle interaction bugs live.
+  //
+  // hoveredNode: { nodeId, rect } | null — whatever node is currently under
+  // the pointer, tracked whenever connectable is true (used to show either
+  // the idle hover handle, or — while a gesture is active — a "drop here"
+  // highlight on the node currently under the pointer).
+  const [hoveredNode, setHoveredNode] = useState(null);
+  // Set while the connect handle is actively held down and dragged (see
+  // onConnectHandlePointerDown) — { fromNodeId, fromRect, pointer }.
+  // Rendered as a live rubber-band line from fromRect to pointer.
+  const [activeConnectDrag, setActiveConnectDrag] = useState(null);
+  // Set instead of the above when the handle was *clicked* (released
+  // without moving past the click threshold) rather than dragged — the
+  // "click one dot, then click another node" alternative to dragging.
+  // { nodeId, rect }. The line still follows the pointer (via the
+  // container's own onPointerMove, extended below), it's just not tied to
+  // a held-down button anymore.
+  const [pendingConnectFrom, setPendingConnectFrom] = useState(null);
+  const [pendingPointer, setPendingPointer] = useState(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -188,6 +226,21 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
   }
 
   function onPointerMove(e) {
+    // Idle hover-handle discovery, and live-tracking the pointer for a
+    // pending click-click connect — both need to run even when nothing is
+    // being dragged, unlike the pan logic below. Skipped while an actual
+    // pan is in progress (dragRef.current set): stale coordinates while
+    // panning aren't worth tracking, same reasoning as the popover closing
+    // on any pan-starting interaction elsewhere in this app.
+    if (connectable && !dragRef.current) {
+      if (pendingConnectFrom) {
+        setPendingPointer({ x: e.clientX, y: e.clientY });
+      }
+      const target = e.target?.closest?.('.node[id]');
+      const resolved = target && extractClickedNodeId(target.getAttribute('id'));
+      setHoveredNode(resolved ? { nodeId: resolved.nodeId, rect: target.getBoundingClientRect() } : null);
+    }
+
     if (!dragRef.current || !svgElRef.current || !viewRef.current) return;
     const rect = svgElRef.current.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -195,6 +248,14 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
     const dy = e.clientY - dragRef.current.startClientY;
     if (Math.abs(dx) > CLICK_MOVE_THRESHOLD || Math.abs(dy) > CLICK_MOVE_THRESHOLD) {
       dragRef.current.moved = true;
+      // A genuine pan started mid-gesture — cancel any pending click-click
+      // connect and the stale hover handle rather than leaving them on
+      // screen once the user's clearly panning, not completing a connect.
+      if (pendingConnectFrom) {
+        setPendingConnectFrom(null);
+        setPendingPointer(null);
+      }
+      setHoveredNode(null);
     }
     const v = viewRef.current;
     const dxUnits = (dx / rect.width) * v.width;
@@ -205,6 +266,65 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
       minY: dragRef.current.startMinY - dyUnits,
     };
     applyView();
+  }
+
+  // Starts a connect gesture from a hovered node's connect handle (see the
+  // JSX below) — deliberately not routed through dragRef/onPointerDown
+  // above (a *separate* gesture from panning, starting from a different
+  // element, tracked via its own plain document-level listeners scoped
+  // exactly to this one gesture's lifetime, the standard vanilla-JS drag
+  // pattern). stopPropagation on the handle's own pointerdown (see JSX)
+  // keeps this from also engaging the container's pan handling.
+  function onConnectHandlePointerDown(e, fromNodeId, fromRect) {
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let moved = false;
+    setActiveConnectDrag({ fromNodeId, fromRect, pointer: { x: startX, y: startY } });
+
+    function resolveNodeAt(x, y) {
+      const el = document.elementFromPoint(x, y);
+      const target = el?.closest?.('.node[id]');
+      if (!target) return null;
+      const resolved = extractClickedNodeId(target.getAttribute('id'));
+      return resolved ? { resolved, target } : null;
+    }
+
+    function onMove(moveEvent) {
+      if (
+        !moved &&
+        (Math.abs(moveEvent.clientX - startX) > CLICK_MOVE_THRESHOLD ||
+          Math.abs(moveEvent.clientY - startY) > CLICK_MOVE_THRESHOLD)
+      ) {
+        moved = true;
+      }
+      setActiveConnectDrag((prev) => (prev ? { ...prev, pointer: { x: moveEvent.clientX, y: moveEvent.clientY } } : prev));
+      // The container's own onPointerMove won't fire for these
+      // document-level events, so the drop-target highlight is kept in
+      // sync here instead, using the same hoveredNode state it reads from.
+      const hit = resolveNodeAt(moveEvent.clientX, moveEvent.clientY);
+      setHoveredNode(hit ? { nodeId: hit.resolved.nodeId, rect: hit.target.getBoundingClientRect() } : null);
+    }
+
+    function onUp(upEvent) {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      setActiveConnectDrag(null);
+      if (moved) {
+        const hit = resolveNodeAt(upEvent.clientX, upEvent.clientY);
+        if (hit && hit.resolved.nodeId !== fromNodeId) {
+          onConnect?.(fromNodeId, hit.resolved.nodeId);
+        }
+      } else {
+        // A plain click on the handle, not a drag — enter click-click mode:
+        // remember the source node and wait for a second click elsewhere
+        // (handleNodeClick below) to complete or cancel it.
+        setPendingConnectFrom({ nodeId: fromNodeId, rect: fromRect });
+        setPendingPointer({ x: upEvent.clientX, y: upEvent.clientY });
+      }
+    }
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
   }
 
   function endDrag(e) {
@@ -243,6 +363,21 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
   // it off the pointerup event, since pointer capture has retargeted that
   // event's own .target to the container by now.
   function handleNodeClick(downTarget) {
+    // A click-click connect is waiting on this exact click — it takes over
+    // completely rather than falling through to the style popover below.
+    // Clicking anywhere else (empty canvas, or the source node again)
+    // still clears the pending state; it just doesn't call onConnect for a
+    // no-op self-connection.
+    if (pendingConnectFrom) {
+      const target = downTarget?.closest?.('.node[id]');
+      const resolved = target && extractClickedNodeId(target.getAttribute('id'));
+      if (resolved && resolved.nodeId !== pendingConnectFrom.nodeId) {
+        onConnect?.(pendingConnectFrom.nodeId, resolved.nodeId);
+      }
+      setPendingConnectFrom(null);
+      setPendingPointer(null);
+      return;
+    }
     if (!onNodeClick || !downTarget?.closest) return;
     const target = downTarget.closest('.node[id]');
     if (!target) return;
@@ -289,6 +424,79 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullscreen]);
 
+  // Escape cancels a pending click-click connect — same escape hatch as
+  // the style popover (App.jsx) and fullscreen above.
+  useEffect(() => {
+    if (!pendingConnectFrom) return undefined;
+    function onKeyDown(e) {
+      if (e.key === 'Escape') {
+        setPendingConnectFrom(null);
+        setPendingPointer(null);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingConnectFrom]);
+
+  // The connect handle shown on idle hover (no gesture in progress yet) —
+  // a single small dot at the node's bottom-right corner, not four
+  // compass-point anchors like Miro/Figma: unlike those tools, Mermaid's
+  // own layout engine decides where an edge actually attaches to a shape
+  // regardless of which point you dragged from, so a single handle is all
+  // this gesture needs (it's "connect this node to another," not "connect
+  // from this specific side").
+  function renderConnectHandle() {
+    if (!connectable || !hoveredNode || activeConnectDrag || pendingConnectFrom) return null;
+    const { rect } = hoveredNode;
+    return (
+      <div
+        className="connect-handle"
+        style={{ left: rect.right - 6, top: rect.bottom - 6 }}
+        title="Drag to another node to connect them, or click and then click another node"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onConnectHandlePointerDown(e, hoveredNode.nodeId, rect);
+        }}
+      />
+    );
+  }
+
+  // Highlights whatever node is currently under the pointer while a
+  // connect gesture (drag or click-click) is active, as a "drop here"
+  // affordance — but not the gesture's own source node, which would just
+  // be confusing (it's already the thing being connected *from*).
+  function renderConnectTarget() {
+    const sourceId = activeConnectDrag?.fromNodeId ?? pendingConnectFrom?.nodeId;
+    if (!sourceId || !hoveredNode || hoveredNode.nodeId === sourceId) return null;
+    const { rect } = hoveredNode;
+    return (
+      <div
+        className="connect-target-highlight"
+        style={{ left: rect.left - 4, top: rect.top - 4, width: rect.width + 8, height: rect.height + 8 }}
+      />
+    );
+  }
+
+  // The live rubber-band line, screen-space (viewport pixels straight from
+  // getBoundingClientRect()/clientX/clientY — no viewBox/zoom transform
+  // needed, unlike the diagram's own pan/zoom, since this overlay isn't
+  // part of the panned/zoomed SVG at all). pointer-events: none (styles.css)
+  // is load-bearing here: without it, this element — not the node
+  // underneath — is what document.elementFromPoint() would find on drop.
+  function renderConnectLine() {
+    const from = activeConnectDrag?.fromRect ?? pendingConnectFrom?.rect;
+    const pointer = activeConnectDrag?.pointer ?? (pendingConnectFrom ? pendingPointer : null);
+    if (!from || !pointer) return null;
+    const x1 = from.left + from.width / 2;
+    const y1 = from.top + from.height / 2;
+    return (
+      <svg className="connect-drag-line-overlay">
+        <line x1={x1} y1={y1} x2={pointer.x} y2={pointer.y} />
+      </svg>
+    );
+  }
+
   return (
     <div
       ref={wrapRef}
@@ -308,6 +516,9 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: svg }}
       />
+      {renderConnectHandle()}
+      {renderConnectTarget()}
+      {renderConnectLine()}
       {/* One rounded pill instead of four separately-bordered buttons
           ([-][100%][+][⛶], per direct user request referencing Figma/Miro's
           zoom control) — the percent readout doubles as the reset button

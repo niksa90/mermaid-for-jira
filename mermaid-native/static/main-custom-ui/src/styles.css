@@ -502,6 +502,57 @@ body {
   filter: drop-shadow(0 0 2px var(--color-primary)) drop-shadow(0 0 7px var(--color-primary));
 }
 
+/* Click/drag-to-connect (DiagramCanvas.jsx). All three are position:fixed,
+   viewport-pixel-coordinate overlays — matching the node-style popover's
+   own positioning technique (getBoundingClientRect() taken at
+   hover/gesture time, not re-tracked live through pan/zoom) — permitted by
+   manifest.yml's `content.styles: ['unsafe-inline']`. */
+.connect-handle {
+  position: fixed;
+  z-index: 60;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  border: 2px solid var(--color-page-bg);
+  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.3);
+  cursor: crosshair;
+  /* Compensates for the 14px box being centered on the corner point
+     (rect.right/rect.bottom) rather than starting there. */
+  transform: translate(-50%, -50%);
+}
+
+.connect-handle:hover {
+  background: var(--color-primary-hover);
+}
+
+.connect-target-highlight {
+  position: fixed;
+  z-index: 55;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 2px var(--color-success-text);
+  pointer-events: none;
+}
+
+/* pointer-events: none is load-bearing, not decorative: without it, this
+   element — not the node underneath the cursor — is what
+   document.elementFromPoint() would find on drop, and every connect
+   attempt would silently fail to resolve a target. */
+.connect-drag-line-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+
+.connect-drag-line-overlay line {
+  stroke: var(--color-primary);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
 /* Click-to-insert shape/element palette (diagram-palette.js), rendered
    above the editor split — same .icon-group/.icon-btn sizing language as
    the style popover's own Icon row, not a new button style. */

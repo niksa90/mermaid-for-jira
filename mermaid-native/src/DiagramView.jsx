@@ -19,6 +19,13 @@ export default function DiagramView({
   // line number to highlight it. Optional: display-mode DiagramViews (no
   // editor alongside them) don't pass this.
   onError,
+  // Click/drag-to-connect (DiagramCanvas.jsx / diagram-connect.js) — both
+  // just forwarded straight through, same as onNodeClick/selectedNode
+  // above. connectable defaults false so display-mode DiagramViews (no
+  // editor alongside them to hold the resulting edge) don't need to pass
+  // anything to opt out.
+  connectable = false,
+  onConnect,
 }) {
   const [svg, setSvg] = useState(null);
   const [error, setError] = useState(null);
@@ -83,6 +90,13 @@ export default function DiagramView({
   }
 
   return (
-    <DiagramCanvas svg={svg} theme={theme} onNodeClick={onNodeClick} selectedNode={selectedNode} />
+    <DiagramCanvas
+      svg={svg}
+      theme={theme}
+      onNodeClick={onNodeClick}
+      selectedNode={selectedNode}
+      connectable={connectable}
+      onConnect={onConnect}
+    />
   );
 }

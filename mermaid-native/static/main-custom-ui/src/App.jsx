@@ -26,6 +26,7 @@ import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
 import { resolveNodeStyleKind } from '../../../src/node-style-kind';
 import { resolvePaletteKind } from '../../../src/diagram-palette';
+import { isConnectable, connectNodes } from '../../../src/diagram-connect';
 import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
 // text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
@@ -1051,6 +1052,14 @@ export default function App() {
                     }
                     onError={(err) =>
                       setParseErrorLines((prev) => ({ ...prev, [diagram.id]: err?.line ?? null }))
+                    }
+                    connectable={isConnectable(diagram.source)}
+                    onConnect={(fromId, toId) =>
+                      updateDiagram(
+                        diagram.id,
+                        { source: connectNodes(diagram.source, fromId, toId) },
+                        { immediate: true }
+                      )
                     }
                   />
                 </DiagramErrorBoundary>
