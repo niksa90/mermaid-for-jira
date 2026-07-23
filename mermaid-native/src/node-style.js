@@ -7,6 +7,7 @@
 // NodeId ...` is a flowchart-specific directive, and the id-detection
 // heuristics below (bracket shapes, arrow adjacency) are written against
 // flowchart syntax specifically, not Mermaid's other diagram types.
+import { detectDiagramKind } from './diagram-kind.js';
 
 const RESERVED_WORDS = new Set([
   'flowchart',
@@ -36,11 +37,7 @@ const RESERVED_WORDS = new Set([
 const NODE_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isFlowchartSource(source) {
-  const firstContentLine = (source || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith('%%'));
-  return !!firstContentLine && /^(flowchart|graph)\b/.test(firstContentLine);
+  return detectDiagramKind(source) === 'flowchart';
 }
 
 /**

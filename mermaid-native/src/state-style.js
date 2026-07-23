@@ -9,6 +9,7 @@
 // deterministic per-state class name (`nodeStyle_<stateId>`), so it reads
 // and writes like a single per-state style even though it's backed by two
 // source lines.
+import { detectDiagramKind } from './diagram-kind.js';
 
 const RESERVED_WORDS = new Set([
   'stateDiagram',
@@ -32,11 +33,7 @@ const RESERVED_WORDS = new Set([
 const STATE_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isStateDiagramSource(source) {
-  const firstContentLine = (source || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith('%%'));
-  return !!firstContentLine && /^stateDiagram(-v2)?\b/.test(firstContentLine);
+  return detectDiagramKind(source) === 'state';
 }
 
 /**

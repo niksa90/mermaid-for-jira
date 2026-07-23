@@ -502,6 +502,21 @@ body {
   filter: drop-shadow(0 0 2px var(--color-primary)) drop-shadow(0 0 7px var(--color-primary));
 }
 
+/* Click-to-insert shape/element palette (diagram-palette.js), rendered
+   above the editor split — same .icon-group/.icon-btn sizing language as
+   the style popover's own Icon row, not a new button style. */
+.palette-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.palette-btn {
+  font-size: 15px;
+  line-height: 1;
+}
+
 .editor-split {
   display: flex;
   align-items: stretch;

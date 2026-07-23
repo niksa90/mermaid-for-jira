@@ -10,6 +10,12 @@ import {
   ArrowDownIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  DatabaseShapeIcon,
+  SubroutineShapeIcon,
+  DocumentShapeIcon,
+  LaneShapeIcon,
+  ParticipantShapeIcon,
+  ActorShapeIcon,
 } from '../../../src/icons';
 import DiagramView from '../../../src/DiagramView';
 import CodeMirrorEditor from '../../../src/CodeMirrorEditor';
@@ -19,6 +25,7 @@ import { DIAGRAM_TEMPLATES, templateById } from '../../../src/diagram-templates'
 import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
 import { resolveNodeStyleKind } from '../../../src/node-style-kind';
+import { resolvePaletteKind } from '../../../src/diagram-palette';
 import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
 // text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
@@ -89,6 +96,24 @@ function newDiagram(theme = 'default', source) {
 
 function themeLabel(theme) {
   return theme.charAt(0).toUpperCase() + theme.slice(1);
+}
+
+// diagram-palette.js entries carry either a plain unicode glyph (□, ◇, ○,
+// ...) or one of these marker strings for shapes with no clean single-
+// codepoint equivalent (a database cylinder, a subroutine's double
+// border, ...) — see icons.jsx's "Hand-drawn shape-preview glyphs" section.
+const PALETTE_GLYPH_ICONS = {
+  database: DatabaseShapeIcon,
+  subroutine: SubroutineShapeIcon,
+  document: DocumentShapeIcon,
+  lane: LaneShapeIcon,
+  participant: ParticipantShapeIcon,
+  actor: ActorShapeIcon,
+};
+
+function renderPaletteGlyph(glyph) {
+  const Icon = PALETTE_GLYPH_ICONS[glyph];
+  return Icon ? <Icon label="" size="small" /> : glyph;
 }
 
 /**
@@ -956,6 +981,37 @@ export default function App() {
                 placeholder="None"
               />
             </div>
+            {(() => {
+              // Click-to-insert shape/element palette — only rendered when
+              // this diagram's type actually has one (flowchart/sequence so
+              // far; resolvePaletteKind returns null for anything else, same
+              // "nothing to offer" convention resolveNodeStyleKind already
+              // follows for the style popover's per-diagram-type rows).
+              const palette = resolvePaletteKind(diagram.source);
+              if (!palette) return null;
+              return (
+                <div className="palette-row" role="group" aria-label="Insert element">
+                  {palette.entries.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className="btn btn-subtle btn-icon palette-btn"
+                      title={`Insert ${entry.label}`}
+                      aria-label={`Insert ${entry.label}`}
+                      onClick={() =>
+                        updateDiagram(
+                          diagram.id,
+                          { source: entry.insert(diagram.source) },
+                          { immediate: true }
+                        )
+                      }
+                    >
+                      {renderPaletteGlyph(entry.glyph)}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
             <div className="editor-split" data-split={splitPercent}>
               <div className="editor-pane">
                 <CodeMirrorEditor
