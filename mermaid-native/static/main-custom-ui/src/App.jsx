@@ -1490,6 +1490,7 @@ export default function App() {
                       )
                     }
                     onEdgeClick={(edgeInfo) => openEdgePopover(diagram.id, edgeInfo)}
+                    filenameHint={diagram.label}
                   />
                 </DiagramErrorBoundary>
               </div>
@@ -1499,7 +1500,12 @@ export default function App() {
           !isCollapsed && (
             <div className="diagram-card-body diagram-card-body-display">
               <DiagramErrorBoundary>
-                <DiagramView source={diagram.source} theme={diagram.theme} idPrefix={diagram.id} />
+                <DiagramView
+                  source={diagram.source}
+                  theme={diagram.theme}
+                  idPrefix={diagram.id}
+                  filenameHint={diagram.label}
+                />
               </DiagramErrorBoundary>
             </div>
           )

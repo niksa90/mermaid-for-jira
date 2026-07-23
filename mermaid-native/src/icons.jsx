@@ -84,3 +84,10 @@ export const ParticipantShapeIcon = makeIcon(
 export const ActorShapeIcon = makeIcon(
   '<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="5.5" r="2.2" fill="currentColor" stroke="none"/><line x1="12" y1="7.8" x2="12" y2="15"/><line x1="7" y1="10.5" x2="17" y2="10.5"/><line x1="12" y1="15" x2="7.5" y2="21"/><line x1="12" y1="15" x2="16.5" y2="21"/></g>'
 );
+
+// Used by DiagramCanvas.jsx's export menu — a plain hand-drawn arrow-into-
+// tray glyph, same convention as the shape-preview icons above (no
+// Atlaskit equivalent to mirror here either).
+export const DownloadIcon = makeIcon(
+  '<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v10.5"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M5 17.5v1a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5-1.5v-1"/></g>'
+);

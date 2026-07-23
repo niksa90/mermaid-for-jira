@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { VidFullScreenOnIcon, VidFullScreenOffIcon } from './icons';
+import { VidFullScreenOnIcon, VidFullScreenOffIcon, DownloadIcon } from './icons';
 import { isDarkMermaidTheme } from './mermaid-renderer';
 import {
   extractClickedNodeId,
@@ -8,6 +8,13 @@ import {
   extractClickedErEdgeId,
   extractClickedStateEdgeIndex,
 } from './svg-node-id';
+import {
+  buildExportSvgElement,
+  serializeExportSvg,
+  downloadBlob,
+  svgStringToPngBlob,
+  slugifyFilename,
+} from './diagram-export';
 
 const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.2;
@@ -140,6 +147,8 @@ export default function DiagramCanvas({
   // can restyle (class/ER) or delete from one place. Only wired up when
   // connectKind is set, same scope as the connect gesture itself.
   onEdgeClick,
+  // Used only to name a downloaded SVG/PNG file — see handleDownload below.
+  filenameHint,
 }) {
   const connectable = !!connectKind;
   const wrapRef = useRef(null);
@@ -181,6 +190,17 @@ export default function DiagramCanvas({
   const [pendingPointer, setPendingPointer] = useState(null);
   // See onPointerMove's HOVER_CLEAR_GRACE_MS usage.
   const hoverClearTimeoutRef = useRef(null);
+
+  // "Download SVG/PNG" menu, anchored off the zoom-controls pill below.
+  // downloadBusy is which format is currently being generated ('png'
+  // rasterization is async; 'svg' resolves effectively instantly but is
+  // tracked the same way for a consistent disabled/spinner state) — kept
+  // separate from a plain boolean so two rapid clicks on different formats
+  // can't race each other into producing the wrong file.
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState(null);
+  const [downloadError, setDownloadError] = useState(null);
+  const downloadMenuRef = useRef(null);
 
   useEffect(
     () => () => {
@@ -265,6 +285,9 @@ export default function DiagramCanvas({
       hitPath.setAttribute('stroke', 'transparent');
       hitPath.setAttribute('stroke-width', '14');
       hitPath.setAttribute('pointer-events', 'stroke');
+      // Also read by diagram-export.js to strip these back out of a
+      // downloaded SVG/PNG — not by matching stroke="transparent", which a
+      // real Mermaid element could legitimately also use.
       hitPath.setAttribute('data-hit-clone', '1');
       path.parentNode.insertBefore(hitPath, path.nextSibling);
     });
@@ -646,6 +669,56 @@ export default function DiagramCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullscreen]);
 
+  // Closes the download menu on an outside click or Escape — same pattern
+  // App.jsx's own popovers use for the same purpose.
+  useEffect(() => {
+    if (!downloadMenuOpen) return undefined;
+    function onPointerDown(e) {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target)) {
+        setDownloadMenuOpen(false);
+      }
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') setDownloadMenuOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [downloadMenuOpen]);
+
+  // Builds a standalone, natural-size copy of the currently-rendered SVG
+  // (see buildExportSvgElement — ignores whatever pan/zoom is on screen)
+  // and saves it as either a .svg or a rasterized .png. Errors are shown
+  // inline in the menu rather than thrown — a failed download shouldn't
+  // ever take down the diagram itself (same "don't let a side feature
+  // break the main view" convention as DiagramErrorBoundary elsewhere).
+  async function handleDownload(kind) {
+    const svgEl = svgElRef.current;
+    const natural = baseViewBoxRef.current;
+    if (!svgEl || !natural) return;
+    setDownloadError(null);
+    setDownloadBusy(kind);
+    try {
+      const clone = buildExportSvgElement(svgEl, natural, isDarkMermaidTheme(theme));
+      const svgString = serializeExportSvg(clone);
+      const filename = `${slugifyFilename(filenameHint)}.${kind}`;
+      if (kind === 'svg') {
+        downloadBlob(new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' }), filename);
+      } else {
+        const pngBlob = await svgStringToPngBlob(svgString, natural.width, natural.height);
+        downloadBlob(pngBlob, filename);
+      }
+      setDownloadMenuOpen(false);
+    } catch (err) {
+      setDownloadError(err.message || 'Download failed.');
+    } finally {
+      setDownloadBusy(null);
+    }
+  }
+
   // Escape cancels a pending click-click connect — same escape hatch as
   // the style popover (App.jsx) and fullscreen above.
   useEffect(() => {
@@ -783,6 +856,44 @@ export default function DiagramCanvas({
           +
         </button>
         <div className="zoom-control-divider" />
+        <div className="download-menu-anchor" ref={downloadMenuRef}>
+          <button
+            type="button"
+            className="zoom-control-btn"
+            title="Download diagram"
+            aria-haspopup="true"
+            aria-expanded={downloadMenuOpen}
+            onClick={() => {
+              setDownloadError(null);
+              setDownloadMenuOpen((v) => !v);
+            }}
+          >
+            <DownloadIcon label="" size="small" />
+          </button>
+          {downloadMenuOpen && (
+            <div className="download-menu" role="menu">
+              <button
+                type="button"
+                className="download-menu-item"
+                role="menuitem"
+                disabled={!!downloadBusy}
+                onClick={() => handleDownload('svg')}
+              >
+                {downloadBusy === 'svg' ? 'Preparing SVG…' : 'Download SVG'}
+              </button>
+              <button
+                type="button"
+                className="download-menu-item"
+                role="menuitem"
+                disabled={!!downloadBusy}
+                onClick={() => handleDownload('png')}
+              >
+                {downloadBusy === 'png' ? 'Preparing PNG…' : 'Download PNG'}
+              </button>
+              {downloadError && <div className="download-menu-error">{downloadError}</div>}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           className="zoom-control-btn"
