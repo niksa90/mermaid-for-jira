@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { invoke, view } from '@forge/bridge';
 import Spinner from '../../../src/Spinner';
 import SectionMessage from '../../../src/SectionMessage';
@@ -10,6 +10,12 @@ import {
   ArrowDownIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  DatabaseShapeIcon,
+  SubroutineShapeIcon,
+  TrapezoidShapeIcon,
+  LaneShapeIcon,
+  ParticipantShapeIcon,
+  ActorShapeIcon,
 } from '../../../src/icons';
 import DiagramView from '../../../src/DiagramView';
 import CodeMirrorEditor from '../../../src/CodeMirrorEditor';
@@ -19,6 +25,24 @@ import { DIAGRAM_TEMPLATES, templateById } from '../../../src/diagram-templates'
 import { stableStringify } from '../../../src/stable-json';
 import { buildRenderGroups, moveTargetIndex, moveBounds } from '../../../src/diagram-groups';
 import { resolveNodeStyleKind } from '../../../src/node-style-kind';
+import { resolvePaletteKind } from '../../../src/diagram-palette';
+import {
+  resolveConnectKind,
+  connectNodes,
+  parseClassIds,
+  deleteFlowchartEdge,
+  readFlowchartEdgeLabel,
+  setFlowchartEdgeLabel,
+  deleteStateEdge,
+  readStateEdgeAtIndex,
+  setStateEdgeLabelAtIndex,
+  readClassEdge,
+  deleteClassEdge,
+  setClassEdge,
+  readErEdge,
+  deleteErEdge,
+  setErEdge,
+} from '../../../src/diagram-connect';
 import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
 // text (see BRAND_FONT_FAMILY in mermaid-renderer.js), not a full app-chrome
@@ -27,6 +51,22 @@ import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // font payload for a weight most diagram text never uses.
 import '@fontsource/inter/400.css';
 import './styles.css';
+
+// Shared by both the node-style popover and the edge popover below: clamps
+// a popover's `top` (position: fixed, viewport px) fully into the iframe's
+// own viewport given the clicked element's rect and the popover's own
+// rendered height — preferring just below the click, falling back above,
+// and clamping into range if neither side has room. See nodePopover's
+// popoverTop state comment for the bug this specifically fixes (a
+// bottom-row node's popover getting clipped by the iframe's bottom edge).
+function clampPopoverTop(rect, popoverHeight) {
+  const margin = 8;
+  const belowTop = rect.bottom + margin;
+  const aboveTop = rect.top - margin - popoverHeight;
+  if (belowTop + popoverHeight <= window.innerHeight - margin) return belowTop;
+  if (aboveTop >= margin) return aboveTop;
+  return Math.min(Math.max(margin, belowTop), Math.max(margin, window.innerHeight - popoverHeight - margin));
+}
 
 const SAVE_DEBOUNCE_MS = 600;
 // A native <input type="color"> fires onChange continuously while its
@@ -89,6 +129,24 @@ function newDiagram(theme = 'default', source) {
 
 function themeLabel(theme) {
   return theme.charAt(0).toUpperCase() + theme.slice(1);
+}
+
+// diagram-palette.js entries carry either a plain unicode glyph (□, ◇, ○,
+// ...) or one of these marker strings for shapes with no clean single-
+// codepoint equivalent (a database cylinder, a subroutine's double
+// border, ...) — see icons.jsx's "Hand-drawn shape-preview glyphs" section.
+const PALETTE_GLYPH_ICONS = {
+  database: DatabaseShapeIcon,
+  subroutine: SubroutineShapeIcon,
+  trapezoid: TrapezoidShapeIcon,
+  lane: LaneShapeIcon,
+  participant: ParticipantShapeIcon,
+  actor: ActorShapeIcon,
+};
+
+function renderPaletteGlyph(glyph) {
+  const Icon = PALETTE_GLYPH_ICONS[glyph];
+  return Icon ? <Icon label="" size="small" /> : glyph;
 }
 
 /**
@@ -168,6 +226,43 @@ export default function App() {
   // this shipped, rather than kept as a parallel entry point.
   const [nodePopover, setNodePopover] = useState(null);
   const nodePopoverRef = useRef(null);
+  // The popover's actual `top` (position: fixed, viewport px), computed and
+  // clamped in the layout effect below rather than derived inline from
+  // nodePopover.rect. Fixes a real bug: this used to always be
+  // rect.bottom + 8, which for a bottom-row node (single diagram on the
+  // panel, tall canvas) can fall below window.innerHeight — the Forge
+  // iframe's own viewport, which this app can't scroll past — clipping the
+  // color/border controls entirely with no way to reach them.
+  //
+  // A first fix just flipped to anchoring above the node instead (rect.top
+  // - popoverHeight - 8) whenever below didn't fit. That introduced a new
+  // failure: for a node positioned high enough that *neither* side has
+  // popoverHeight + 8 of room (a short canvas, or a popover taller than
+  // either gap — flowchart's popover is taller than state/ER's, since it
+  // has an extra icon row), flipping unconditionally to "above" could push
+  // the popover's own top edge above y=0, clipping it at the *top* instead
+  // — trading one clipped edge for the other rather than actually fixing
+  // it. Storing a single already-clamped `top` number (not an
+  // above/below enum) fixes this properly: prefer below, fall back to
+  // above, and if neither fits, clamp into [8, window.innerHeight -
+  // popoverHeight - 8] so the popover is guaranteed to stay fully
+  // on-screen rather than committing to whichever side "sounds" better.
+  const [popoverTop, setPopoverTop] = useState(0);
+  // The edge popover: opened by clicking an existing edge/relationship/
+  // transition (any connect-supported diagram kind), offering an
+  // arrow-style/cardinality picker (class/ER only — see
+  // diagram-connect.js's resolveConnectKind), a label field (ER only,
+  // mandatory in Mermaid's own syntax; optional for class), and a Delete
+  // button. Shape mirrors nodePopover above: { diagramId, kind, fromId,
+  // toId, rect } for flowchart/class/ER, or { diagramId, kind: 'state',
+  // edgeIndex, rect } for state (see extractClickedStateEdgeIndex for why
+  // state identifies its edges positionally instead of by endpoint). Kept
+  // as its own independent popover rather than folded into nodePopover's
+  // shape — the two represent genuinely different things (a node vs. a
+  // connector between two nodes) with different available actions.
+  const [edgePopover, setEdgePopover] = useState(null);
+  const edgePopoverRef = useRef(null);
+  const [edgePopoverTop, setEdgePopoverTop] = useState(0);
   // Whether the panel is effectively rendering in dark mode (see
   // resolveEffectiveDark) — used only to pick a new diagram's starting
   // Mermaid theme (see addDiagram); never re-applied to existing diagrams.
@@ -182,14 +277,30 @@ export default function App() {
   // Diagram id whose remove button is showing an inline "are you sure?"
   // instead of removing immediately on click.
   const [pendingRemoveId, setPendingRemoveId] = useState(null);
+  // Per-diagram source line a Mermaid parse error currently points at (or
+  // undefined/null once it clears) — keyed by diagram id since several
+  // diagram cards can be in edit mode with independent errors at once.
+  // Populated by DiagramView's onError (preview pane) and consumed by
+  // CodeMirrorEditor's errorLine prop (editor pane), which are siblings
+  // under the same diagram card, not parent/child — hence lifting this up
+  // to App.jsx rather than passing it directly between them.
+  const [parseErrorLines, setParseErrorLines] = useState({});
   // Most recently removed diagram, kept around briefly so the removal can
   // be undone: { diagram, index } — index is where it lived so undo puts it
   // back in the same place rather than at the end of the list.
   const [undoState, setUndoState] = useState(null);
+  // Same pattern as undoState above, but for arrow deletion (DiagramCanvas's
+  // click-to-delete-edge) — kept as its own independent state/timeout
+  // rather than generalizing undoState to hold either kind, since the two
+  // actions (remove a whole diagram vs. delete one edge within it) don't
+  // share enough shape to be worth threading through one union type yet:
+  // { diagramId, prevSource }.
+  const [edgeUndoState, setEdgeUndoState] = useState(null);
 
   const issueKeyRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const undoTimeoutRef = useRef(null);
+  const edgeUndoTimeoutRef = useRef(null);
   const latestDiagramsRef = useRef([]);
   // What we believe the server currently holds — used for optimistic
   // concurrency (see resolvers/index.js). Updated on load and after every
@@ -276,6 +387,25 @@ export default function App() {
     };
   }, []);
 
+  // Measures the popover's actual rendered height (varies by diagram kind —
+  // see popoverPlacement above) and flips it above the clicked node whenever
+  // it wouldn't fit below within the iframe's own viewport. useLayoutEffect,
+  // not useEffect: it needs to land before the browser paints, or the
+  // popover would visibly flash at the clipped position first.
+  useLayoutEffect(() => {
+    if (!nodePopover || !nodePopoverRef.current) return;
+    setPopoverTop(clampPopoverTop(nodePopover.rect, nodePopoverRef.current.getBoundingClientRect().height));
+  }, [nodePopover]);
+
+  // Same clamped-into-viewport positioning as the node-style popover above,
+  // for the edge popover (arrow-style/label picker + Delete) opened by
+  // clicking an existing edge/relationship/transition.
+  useLayoutEffect(() => {
+    if (!edgePopover || !edgePopoverRef.current) return;
+    setEdgePopoverTop(clampPopoverTop(edgePopover.rect, edgePopoverRef.current.getBoundingClientRect().height));
+  }, [edgePopover]);
+
+
   // Closes the click-to-style popover on Escape or on any pointerdown
   // outside it — including the pointerdown that starts panning the canvas
   // underneath it, since that's also outside the popover's own DOM node.
@@ -283,14 +413,20 @@ export default function App() {
   // handler, and before a click on a *different* node reopens the popover
   // there via onNodeClick.
   useEffect(() => {
-    if (!nodePopover) return undefined;
+    if (!nodePopover && !edgePopover) return undefined;
     function onDocPointerDown(e) {
-      if (nodePopoverRef.current && !nodePopoverRef.current.contains(e.target)) {
+      if (nodePopover && nodePopoverRef.current && !nodePopoverRef.current.contains(e.target)) {
         setNodePopover(null);
+      }
+      if (edgePopover && edgePopoverRef.current && !edgePopoverRef.current.contains(e.target)) {
+        setEdgePopover(null);
       }
     }
     function onKeyDown(e) {
-      if (e.key === 'Escape') setNodePopover(null);
+      if (e.key === 'Escape') {
+        setNodePopover(null);
+        setEdgePopover(null);
+      }
     }
     document.addEventListener('pointerdown', onDocPointerDown, true);
     document.addEventListener('keydown', onKeyDown);
@@ -298,7 +434,7 @@ export default function App() {
       document.removeEventListener('pointerdown', onDocPointerDown, true);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [nodePopover]);
+  }, [nodePopover, edgePopover]);
 
   // Flush any pending debounced save if the panel closes mid-edit.
   useEffect(
@@ -310,6 +446,9 @@ export default function App() {
       }
       if (undoTimeoutRef.current) {
         clearTimeout(undoTimeoutRef.current);
+      }
+      if (edgeUndoTimeoutRef.current) {
+        clearTimeout(edgeUndoTimeoutRef.current);
       }
     },
     []
@@ -479,6 +618,11 @@ export default function App() {
       delete next[id];
       return next;
     });
+    setParseErrorLines((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     persist(
       latestDiagramsRef.current.filter((d) => d.id !== id),
       { immediate: true }
@@ -503,6 +647,64 @@ export default function App() {
     setModes((prev) => ({ ...prev, [undoState.diagram.id]: 'display' }));
     setUndoState(null);
     persist(restored, { immediate: true });
+  }
+
+  // Opens the edge popover for a clicked edge/relationship/transition —
+  // restyling and deletion both happen from within the popover itself (see
+  // renderEdgePopover), not immediately on click. This replaces the
+  // flowchart-only instant-delete-on-click this app shipped with
+  // originally: once class/ER relationships needed a style choice at
+  // click time (not just delete), a consistent "click opens options" model
+  // across every connect-supported diagram type was worth the small extra
+  // click flowchart deletion now takes, rather than flowchart staying a
+  // special case.
+  function openEdgePopover(diagramId, edgeInfo) {
+    setNodePopover(null);
+    setEdgePopover({ diagramId, ...edgeInfo });
+  }
+
+  // Deletes whichever edge the edge popover is currently open on, same
+  // "act now, offer Undo" pattern as confirmRemove/undoRemove above rather
+  // than a confirmation dialog before the delete happens. Dispatches to the
+  // right diagram-connect.js delete function by kind — state identifies its
+  // edge positionally (edgeIndex), every other kind by its two endpoints.
+  function deleteCurrentEdge() {
+    if (!edgePopover) return;
+    const diagram = latestDiagramsRef.current.find((d) => d.id === edgePopover.diagramId);
+    if (!diagram) return;
+    let nextSource = diagram.source;
+    if (edgePopover.kind === 'flowchart') {
+      nextSource = deleteFlowchartEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+    } else if (edgePopover.kind === 'state') {
+      nextSource = deleteStateEdge(diagram.source, edgePopover.edgeIndex);
+    } else if (edgePopover.kind === 'class') {
+      nextSource = deleteClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+    } else if (edgePopover.kind === 'er') {
+      nextSource = deleteErEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+    }
+    setEdgePopover(null);
+    // A no-op delete (source unchanged — the edge line wasn't in a shape
+    // this app's best-effort parser recognized) has nothing to undo.
+    if (nextSource === diagram.source) return;
+
+    if (edgeUndoTimeoutRef.current) clearTimeout(edgeUndoTimeoutRef.current);
+    setEdgeUndoState({ diagramId: diagram.id, prevSource: diagram.source });
+    edgeUndoTimeoutRef.current = setTimeout(() => {
+      edgeUndoTimeoutRef.current = null;
+      setEdgeUndoState(null);
+    }, UNDO_TIMEOUT_MS);
+
+    updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
+  }
+
+  function undoEdgeDelete() {
+    if (!edgeUndoState) return;
+    if (edgeUndoTimeoutRef.current) {
+      clearTimeout(edgeUndoTimeoutRef.current);
+      edgeUndoTimeoutRef.current = null;
+    }
+    updateDiagram(edgeUndoState.diagramId, { source: edgeUndoState.prevSource }, { immediate: true });
+    setEdgeUndoState(null);
   }
 
   function setMode(id, mode) {
@@ -674,7 +876,7 @@ export default function App() {
     const { rect } = nodePopover;
     const style = {
       left: Math.max(8, rect.left + rect.width / 2),
-      top: rect.bottom + 8,
+      top: popoverTop,
     };
 
     return (
@@ -747,7 +949,138 @@ export default function App() {
             updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
           }}
         >
+          <span className="node-style-popover-reset-icon" aria-hidden="true">
+            ↺
+          </span>
           Reset node
+        </button>
+      </div>
+    );
+  }
+
+  // The edge popover: opened by clicking an existing edge/relationship/
+  // transition in any connect-supported diagram (see openEdgePopover).
+  // Offers an arrow-style/cardinality picker for class and ER (the two
+  // kinds with more than one meaningful relationship type — see
+  // resolveConnectKind), a label field for ER (mandatory in Mermaid's own
+  // syntax) and class (optional), and a Delete button for every kind,
+  // including flowchart/state which have neither picker — this replaces
+  // flowchart's old instant-delete-on-click (see openEdgePopover's comment
+  // for why that changed).
+  function renderEdgePopover() {
+    if (!edgePopover) return null;
+    const diagram = diagrams.find((d) => d.id === edgePopover.diagramId);
+    if (!diagram) return null;
+    const connectKind = resolveConnectKind(diagram.source);
+    // Same "outlived a source edit" guard as renderNodePopover — closes
+    // silently rather than operating on a stale edge reference.
+    if (!connectKind || connectKind.kind !== edgePopover.kind) return null;
+
+    // Reads the edge's current arrow/cardinality (class/ER only) and label
+    // (every kind) fresh from diagram.source on every render, rather than a
+    // local draft state synced once on open. Unlike the Section field (see
+    // CLAUDE.md's Section-input gotcha), a label isn't used as a React key
+    // anywhere — nothing here remounts mid-edit — so binding the input
+    // straight to source and writing on every keystroke is safe, and fixes
+    // a real bug the draft-state version had: closing the popover via an
+    // outside click (or pressing Enter, which doesn't blur a plain text
+    // input) never gave the draft's onBlur handler a chance to fire, so an
+    // edit only ever "took" if the user happened to Tab out of the field.
+    let arrowId = null;
+    let label = '';
+    if (connectKind.kind === 'flowchart') {
+      label = readFlowchartEdgeLabel(diagram.source, edgePopover.fromId, edgePopover.toId);
+      if (label === null) return null; // edge line no longer matches (source hand-edited)
+    } else if (connectKind.kind === 'state') {
+      const info = readStateEdgeAtIndex(diagram.source, edgePopover.edgeIndex);
+      if (!info) return null;
+      label = info.label;
+    } else if (connectKind.kind === 'class') {
+      const info = readClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+      if (!info) return null;
+      arrowId = info.arrowId;
+      label = info.label;
+    } else if (connectKind.kind === 'er') {
+      const info = readErEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+      if (!info) return null;
+      arrowId = info.arrowId;
+      label = info.label;
+    }
+
+    function applyArrow(nextArrowId) {
+      const setEdge = connectKind.kind === 'class' ? setClassEdge : setErEdge;
+      updateDiagram(
+        diagram.id,
+        { source: setEdge(diagram.source, edgePopover.fromId, edgePopover.toId, nextArrowId, label) },
+        { immediate: true }
+      );
+    }
+
+    // Not `{ immediate: true }` — this fires on every keystroke, same as
+    // the main CodeMirror editor's onChange, and relies on the same
+    // debounced-save path (flushed on blur below) rather than a network
+    // call per character.
+    function applyLabel(nextLabel) {
+      let nextSource;
+      if (connectKind.kind === 'flowchart') {
+        nextSource = setFlowchartEdgeLabel(diagram.source, edgePopover.fromId, edgePopover.toId, nextLabel);
+      } else if (connectKind.kind === 'state') {
+        nextSource = setStateEdgeLabelAtIndex(diagram.source, edgePopover.edgeIndex, nextLabel);
+      } else if (connectKind.kind === 'class') {
+        nextSource = setClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, nextLabel);
+      } else {
+        nextSource = setErEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, nextLabel);
+      }
+      updateDiagram(diagram.id, { source: nextSource });
+    }
+
+    const style = {
+      left: Math.max(8, edgePopover.rect.left + edgePopover.rect.width / 2),
+      top: edgePopoverTop,
+    };
+    const title = connectKind.kind === 'state' ? 'Transition' : `${edgePopover.fromId} → ${edgePopover.toId}`;
+
+    return (
+      <div className="node-style-popover" ref={edgePopoverRef} style={style}>
+        <div className="node-style-popover-header">
+          <span className="node-style-popover-title">{title}</span>
+          <button
+            type="button"
+            className="btn btn-subtle btn-icon node-style-popover-close"
+            aria-label="Close arrow popover"
+            onClick={() => setEdgePopover(null)}
+          >
+            ×
+          </button>
+        </div>
+        {connectKind.arrowOptions && (
+          <div className="node-style-popover-row">
+            <span className="node-style-popover-label">Type</span>
+            <select className="select-input" value={arrowId} onChange={(e) => applyArrow(e.target.value)}>
+              {connectKind.arrowOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="node-style-popover-row">
+          <span className="node-style-popover-label">Label</span>
+          <input
+            type="text"
+            className="text-input"
+            value={label}
+            onChange={(e) => applyLabel(e.target.value)}
+            onBlur={() => flushSave()}
+            placeholder={connectKind.needsLabel ? 'Required' : 'Optional'}
+          />
+        </div>
+        <button type="button" className="btn btn-subtle node-style-popover-reset" onClick={deleteCurrentEdge}>
+          <span className="node-style-popover-reset-icon" aria-hidden="true">
+            ✕
+          </span>
+          Delete arrow
         </button>
       </div>
     );
@@ -892,12 +1225,44 @@ export default function App() {
                 placeholder="None"
               />
             </div>
+            {(() => {
+              // Click-to-insert shape/element palette — only rendered when
+              // this diagram's type actually has one (flowchart/sequence so
+              // far; resolvePaletteKind returns null for anything else, same
+              // "nothing to offer" convention resolveNodeStyleKind already
+              // follows for the style popover's per-diagram-type rows).
+              const palette = resolvePaletteKind(diagram.source);
+              if (!palette) return null;
+              return (
+                <div className="palette-row" role="group" aria-label="Insert element">
+                  {palette.entries.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className="btn btn-subtle btn-icon palette-btn"
+                      title={`Insert ${entry.label}`}
+                      aria-label={`Insert ${entry.label}`}
+                      onClick={() =>
+                        updateDiagram(
+                          diagram.id,
+                          { source: entry.insert(diagram.source) },
+                          { immediate: true }
+                        )
+                      }
+                    >
+                      {renderPaletteGlyph(entry.glyph)}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
             <div className="editor-split" data-split={splitPercent}>
               <div className="editor-pane">
                 <CodeMirrorEditor
                   value={diagram.source}
                   onChange={(source) => updateDiagram(diagram.id, { source })}
                   onBlur={flushSave}
+                  errorLine={parseErrorLines[diagram.id]}
                 />
               </div>
               <div
@@ -928,6 +1293,27 @@ export default function App() {
                         ? { kind: nodePopover.kind, nodeId: nodePopover.nodeId }
                         : null
                     }
+                    onError={(err) =>
+                      setParseErrorLines((prev) => ({ ...prev, [diagram.id]: err?.line ?? null }))
+                    }
+                    connectKind={resolveConnectKind(diagram.source)}
+                    knownIds={parseClassIds(diagram.source)}
+                    onConnect={(fromId, toId) =>
+                      // connectNodes picks the right syntax (and, for
+                      // class/ER, a sensible default arrow/cardinality —
+                      // see resolveConnectKind) from diagram.source itself,
+                      // so this call site doesn't need to branch on kind.
+                      // Restyling the new edge (arrow type, ER's label)
+                      // is one click away afterward, same as any other
+                      // existing edge — the connect gesture itself stays a
+                      // single drag/click-click either way.
+                      updateDiagram(
+                        diagram.id,
+                        { source: connectNodes(diagram.source, fromId, toId) },
+                        { immediate: true }
+                      )
+                    }
+                    onEdgeClick={(edgeInfo) => openEdgePopover(diagram.id, edgeInfo)}
                   />
                 </DiagramErrorBoundary>
               </div>
@@ -979,6 +1365,15 @@ export default function App() {
         <div className="undo-banner">
           <span>Diagram removed.</span>
           <button type="button" className="btn btn-subtle" onClick={undoRemove}>
+            Undo
+          </button>
+        </div>
+      )}
+
+      {edgeUndoState && (
+        <div className="undo-banner">
+          <span>Arrow removed.</span>
+          <button type="button" className="btn btn-subtle" onClick={undoEdgeDelete}>
             Undo
           </button>
         </div>
@@ -1057,6 +1452,7 @@ export default function App() {
         )}
       </div>
       {renderNodePopover()}
+      {renderEdgePopover()}
     </div>
   );
 }

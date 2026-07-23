@@ -4,6 +4,7 @@ import {
   withTheme,
   safeDiagramId,
   readableParseError,
+  extractErrorLine,
   parseInlineStyleAttr,
   MERMAID_THEMES,
   isDarkMermaidTheme,
@@ -83,6 +84,22 @@ test('readableParseError collapses whitespace and caps length', () => {
 test('readableParseError falls back to message or String(err)', () => {
   assert.equal(readableParseError({ message: 'boom' }), 'boom');
   assert.equal(readableParseError('plain string error'), 'plain string error');
+});
+
+// Real message shape confirmed against mermaid v11.16.0 via a jsdom scratch
+// render (see mermaid-renderer.js's extractErrorLine comment) — jison's
+// parsers across flowchart/state/sequence all format it this way.
+test('extractErrorLine reads the line number out of a real Mermaid parse error', () => {
+  const err = {
+    message:
+      "Parse error on line 4:\n...--> B[End  B --> C\n---------------------^\nExpecting 'SQE', got '1'",
+  };
+  assert.equal(extractErrorLine(err), 4);
+});
+
+test('extractErrorLine falls back to null when no line number is present', () => {
+  assert.equal(extractErrorLine({ message: 'Diagram is empty.' }), null);
+  assert.equal(extractErrorLine({}), null);
 });
 
 // This is the bug behind "custom style X fill:#... colors don't render":

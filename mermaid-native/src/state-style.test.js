@@ -34,6 +34,13 @@ test('parseStateIds finds state declarations (bare, aliased, composite)', () => 
   assert.ok(ids.includes('D'));
 });
 
+test('parseStateIds finds a <<choice>>/<<fork>>/<<join>> pseudostate declaration', () => {
+  const source = 'stateDiagram-v2\n  state choice1 <<choice>>\n  state fork1 <<fork>>';
+  const ids = parseStateIds(source);
+  assert.ok(ids.includes('choice1'));
+  assert.ok(ids.includes('fork1'));
+});
+
 test('parseStateIds excludes reserved keywords', () => {
   const ids = parseStateIds('stateDiagram-v2\n  [*] --> A\n  A --> [*]');
   assert.ok(!ids.includes('stateDiagram-v2'));

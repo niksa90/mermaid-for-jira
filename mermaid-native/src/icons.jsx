@@ -59,3 +59,28 @@ export const VidFullScreenOnIcon = makeIcon(
 export const VidFullScreenOffIcon = makeIcon(
   '<g fill="currentColor" fill-rule="evenodd"><path fill-rule="nonzero" d="M9 15.003v2.995a1 1 0 1 0 2 0v-3.896C11 13.494 10.507 13 9.9 13H6a1 1 0 0 0 0 2.003z"/><path fill-rule="nonzero" d="M3.74 20.294a.997.997 0 0 0 1.407.005l5.152-5.152a1 1 0 0 0-.005-1.407l-.034-.034a.997.997 0 0 0-1.407-.005l-5.152 5.152a1 1 0 0 0 .005 1.407z"/><path d="M19.067 3.321 13.32 9.066a1.115 1.115 0 0 0 .005 1.57l.036.037a1.11 1.11 0 0 0 1.571.005l5.747-5.744a1.116 1.116 0 0 0-.006-1.57l-.037-.037a1.117 1.117 0 0 0-1.57-.006"/><path d="M13 6.002v3.896c0 .608.493 1.102 1.1 1.102H18a1 1 0 0 0 0-2.003h-3V6.002a1 1 0 1 0-2 0"/></g>'
 );
+
+// Hand-drawn shape-preview glyphs for App.jsx's insert-element palette
+// (diagram-palette.js) — unlike every icon above, these don't mirror a
+// real Atlaskit glyph (there isn't an Atlaskit icon for "flowchart
+// database shape"). Plain outline SVGs, same no-style-prop/no-CSS-in-JS
+// constraint as the rest of this file, sized to preview the actual shape
+// each palette entry inserts.
+export const DatabaseShapeIcon = makeIcon(
+  '<g fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.38 3.13 2.5 7 2.5s7-1.12 7-2.5v-11"/><path d="M5 12c0 1.38 3.13 2.5 7 2.5s7-1.12 7-2.5"/></g>'
+);
+export const SubroutineShapeIcon = makeIcon(
+  '<g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="10" rx="1"/><line x1="7" y1="7" x2="7" y2="17"/><line x1="17" y1="7" x2="17" y2="17"/></g>'
+);
+export const TrapezoidShapeIcon = makeIcon(
+  '<polygon fill="none" stroke="currentColor" stroke-width="1.5" points="6,17 18,17 15,7 9,7"/>'
+);
+export const LaneShapeIcon = makeIcon(
+  '<g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="1"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="15" y1="4" x2="15" y2="20"/></g>'
+);
+export const ParticipantShapeIcon = makeIcon(
+  '<circle cx="12" cy="7" r="3.5" fill="currentColor"/><path d="M5 20c0-4.5 3.5-7 7-7s7 2.5 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+);
+export const ActorShapeIcon = makeIcon(
+  '<g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="5.5" r="2.2" fill="currentColor" stroke="none"/><line x1="12" y1="7.8" x2="12" y2="15"/><line x1="7" y1="10.5" x2="17" y2="10.5"/><line x1="12" y1="15" x2="7.5" y2="21"/><line x1="12" y1="15" x2="16.5" y2="21"/></g>'
+);

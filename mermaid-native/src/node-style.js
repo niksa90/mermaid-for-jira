@@ -7,6 +7,7 @@
 // NodeId ...` is a flowchart-specific directive, and the id-detection
 // heuristics below (bracket shapes, arrow adjacency) are written against
 // flowchart syntax specifically, not Mermaid's other diagram types.
+import { detectDiagramKind } from './diagram-kind.js';
 
 const RESERVED_WORDS = new Set([
   'flowchart',
@@ -36,28 +37,31 @@ const RESERVED_WORDS = new Set([
 const NODE_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isFlowchartSource(source) {
-  const firstContentLine = (source || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith('%%'));
-  return !!firstContentLine && /^(flowchart|graph)\b/.test(firstContentLine);
+  return detectDiagramKind(source) === 'flowchart';
 }
 
 /**
  * Best-effort extraction of node ids from flowchart source: identifiers
- * declared with a shape (`A[Start]`, `A(Round)`, `A{Diamond}`, ...) plus
- * identifiers that only ever appear as an edge endpoint (`A --> B`, with or
- * without an edge label). Regex-based, not a real Mermaid parser, so it can
- * miss unusual syntax (e.g. a subgraph's own `subgraph id[Title]` label) —
- * that just means the picker won't offer that node, not that anything
- * breaks.
+ * declared with a shape (`A[Start]`, `A(Round)`, `A{Diamond}`, Mermaid v11's
+ * unified `A@{ shape: rect, label: "..." }` syntax, ...) plus identifiers
+ * that only ever appear as an edge endpoint (`A --> B`, with or without an
+ * edge label). Regex-based, not a real Mermaid parser, so it can miss
+ * unusual syntax (e.g. a subgraph's own `subgraph id[Title]` label) — that
+ * just means the picker won't offer that node, not that anything breaks.
+ *
+ * The `@{...}` branch matters beyond just recognizing those nodes as
+ * style-able: diagram-palette.js's nextAvailableId() also reads this
+ * function's output to avoid id collisions between palette-inserted
+ * shapes. Missing it here used to mean every palette click computed the
+ * same "next free id" — silently overwriting the previous click's node
+ * with the same id instead of adding a new one.
  */
 export function parseFlowchartNodeIds(source) {
   const text = source || '';
   const ids = new Set();
 
   text.split('\n').forEach((line) => {
-    const m = line.match(/^\s*([A-Za-z_]\w*)\s*[[({>]/);
+    const m = line.match(/^\s*([A-Za-z_]\w*)\s*(?:[[({>]|@\{)/);
     if (m) ids.add(m[1]);
   });
 

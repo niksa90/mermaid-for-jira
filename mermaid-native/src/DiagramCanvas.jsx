@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { VidFullScreenOnIcon, VidFullScreenOffIcon } from './icons';
 import { isDarkMermaidTheme } from './mermaid-renderer';
-import { extractClickedNodeId } from './svg-node-id';
+import {
+  extractClickedNodeId,
+  extractClickedEdgeId,
+  extractClickedClassEdgeId,
+  extractClickedErEdgeId,
+  extractClickedStateEdgeIndex,
+} from './svg-node-id';
 
 const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.2;
@@ -12,6 +18,20 @@ const MAX_SCALE = 8;
 // mouse) would always read as "the user panned, not clicked" and the
 // click-to-style popover (onNodeClick) would never fire.
 const CLICK_MOVE_THRESHOLD = 6;
+// Grace delay before the connect handle disappears after the pointer
+// leaves a node — see onPointerMove's hover-tracking for why this can't be
+// instant.
+const HOVER_CLEAR_GRACE_MS = 350;
+
+// Each diagram kind renders edges under its own CSS class (confirmed via
+// jsdom scratch render) — used both to widen click hit areas and to
+// dispatch edge-click detection to the right id-extraction function below.
+const EDGE_SELECTORS = {
+  flowchart: '.flowchart-link[id]',
+  state: '.transition[id]',
+  class: '.relation[id]',
+  er: '.relationshipLine[id]',
+};
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -28,7 +48,39 @@ function clamp(value, min, max) {
  * into presentation attributes instead of a <style> block). viewBox is a
  * plain SVG attribute, so it isn't affected.
  */
-export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, selectedNode }) {
+export default function DiagramCanvas({
+  svg,
+  theme = 'default',
+  onNodeClick,
+  selectedNode,
+  // What the connect gesture can offer for this diagram's source right now
+  // — diagram-connect.js's resolveConnectKind() result, or null. Node
+  // hover/drag/click-click detection below works identically for every
+  // supported kind (every node group shares the plain `.node` CSS class
+  // regardless of diagram type), so connectKind only needs branching for
+  // edge *click* detection, which uses a different CSS selector and id
+  // scheme per kind (see handleNodeClick). When null, none of the
+  // hover-dot/drag machinery attaches at all — same "don't render controls
+  // a diagram type can't use" convention as the per-node style popover.
+  connectKind = null,
+  // The diagram's own declared class names (diagram-connect.js's
+  // parseClassIds) — only meaningful when connectKind.kind === 'class',
+  // needed to disambiguate a clicked class-relationship's two endpoints
+  // (see extractClickedClassEdgeId).
+  knownIds,
+  // Called with (fromNodeId, toNodeId) once a connect gesture completes
+  // against a valid, different target node.
+  onConnect,
+  // Called with `{ kind, fromId, toId, rect }` (or, for state diagrams,
+  // `{ kind: 'state', edgeIndex, rect }` — state edges carry no endpoint
+  // info in their DOM id at all, see extractClickedStateEdgeIndex) when an
+  // existing edge/relationship/transition is clicked. App.jsx opens the
+  // edge popover from this rather than deleting immediately, so the user
+  // can restyle (class/ER) or delete from one place. Only wired up when
+  // connectKind is set, same scope as the connect gesture itself.
+  onEdgeClick,
+}) {
+  const connectable = !!connectKind;
   const wrapRef = useRef(null);
   const containerRef = useRef(null);
   const svgElRef = useRef(null);
@@ -37,6 +89,44 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
   const dragRef = useRef(null);
   const [isPanning, setIsPanning] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // Live zoom readout for the combined pill control (viewRef/baseViewBoxRef
+  // are plain refs the SVG-attribute pan/zoom mutates directly, precisely
+  // so panning/zooming itself doesn't cost a React re-render on every wheel
+  // tick — this is the one place that *does* need a render, so it's tracked
+  // separately rather than promoting those refs to state wholesale).
+  const [zoomPercent, setZoomPercent] = useState(100);
+  // Click/drag-to-connect (diagram-connect.js's connectNodes). Kept
+  // entirely separate from dragRef/pan state above rather than threaded
+  // through it — the two gestures start from different elements (the
+  // container vs. a small connect-handle overlay) and mixing their state
+  // machines is where subtle interaction bugs live.
+  //
+  // hoveredNode: { nodeId, rect } | null — whatever node is currently under
+  // the pointer, tracked whenever connectable is true (used to show either
+  // the idle hover handle, or — while a gesture is active — a "drop here"
+  // highlight on the node currently under the pointer).
+  const [hoveredNode, setHoveredNode] = useState(null);
+  // Set while the connect handle is actively held down and dragged (see
+  // onConnectHandlePointerDown) — { fromNodeId, fromRect, pointer }.
+  // Rendered as a live rubber-band line from fromRect to pointer.
+  const [activeConnectDrag, setActiveConnectDrag] = useState(null);
+  // Set instead of the above when the handle was *clicked* (released
+  // without moving past the click threshold) rather than dragged — the
+  // "click one dot, then click another node" alternative to dragging.
+  // { nodeId, rect }. The line still follows the pointer (via the
+  // container's own onPointerMove, extended below), it's just not tied to
+  // a held-down button anymore.
+  const [pendingConnectFrom, setPendingConnectFrom] = useState(null);
+  const [pendingPointer, setPendingPointer] = useState(null);
+  // See onPointerMove's HOVER_CLEAR_GRACE_MS usage.
+  const hoverClearTimeoutRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      if (hoverClearTimeoutRef.current) clearTimeout(hoverClearTimeoutRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -58,7 +148,46 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
     svgEl.setAttribute('height', '100%');
     svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     applyView();
+    setZoomPercent(100);
   }, [svg]);
+
+  // Mermaid's own edge/relationship/transition strokes render thin (often
+  // 1-2px) — clicking one to open the edge popover was reported as "you can
+  // barely click on them." Widens the *hit area* without changing the
+  // visible line: for each edge matching this diagram kind's own CSS class,
+  // clones it into an invisible sibling path with a much fatter
+  // `stroke-width`, sharing the same `d`, `class`, and `id` (so
+  // handleNodeClick's `closest('<selector>[id]')` + id-extraction logic
+  // below works unchanged against either element) but `stroke="transparent"`
+  // and no markers, so it adds no visible pixels of its own — it only
+  // exists to be a bigger target for the pointer to land on. Inserted right
+  // after the original so it paints on top and wins the hit-test.
+  useEffect(() => {
+    const container = containerRef.current;
+    const selector = connectKind && EDGE_SELECTORS[connectKind.kind];
+    if (!container || !selector) return;
+    container.querySelectorAll(selector).forEach((path) => {
+      const hitPath = path.cloneNode(false);
+      hitPath.removeAttribute('style');
+      hitPath.removeAttribute('marker-start');
+      hitPath.removeAttribute('marker-end');
+      hitPath.setAttribute('fill', 'none');
+      hitPath.setAttribute('stroke', 'transparent');
+      hitPath.setAttribute('stroke-width', '14');
+      hitPath.setAttribute('pointer-events', 'stroke');
+      path.parentNode.insertBefore(hitPath, path.nextSibling);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svg, connectKind]);
+
+  // A narrower view (viewRef.width) than the diagram's natural size
+  // (baseViewBoxRef.width) means zoomed in, hence the inverse ratio.
+  function syncZoomPercent() {
+    const base = baseViewBoxRef.current;
+    const v = viewRef.current;
+    if (!base || !v) return;
+    setZoomPercent(Math.round((base.width / v.width) * 100));
+  }
 
   // Visual selection highlight for the click-to-style popover — a Miro-like
   // "this is what you're editing" affordance the raw node-color-picker
@@ -119,12 +248,14 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
       height: newHeight,
     };
     applyView();
+    syncZoomPercent();
   }
 
   function resetView() {
     if (!baseViewBoxRef.current) return;
     viewRef.current = { ...baseViewBoxRef.current };
     applyView();
+    setZoomPercent(100);
   }
 
   // Attached manually (not React's onWheel): React treats wheel listeners
@@ -170,6 +301,42 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
   }
 
   function onPointerMove(e) {
+    // Idle hover-handle discovery, and live-tracking the pointer for a
+    // pending click-click connect — both need to run even when nothing is
+    // being dragged, unlike the pan logic below. Skipped while an actual
+    // pan is in progress (dragRef.current set): stale coordinates while
+    // panning aren't worth tracking, same reasoning as the popover closing
+    // on any pan-starting interaction elsewhere in this app.
+    if (connectable && !dragRef.current) {
+      if (pendingConnectFrom) {
+        setPendingPointer({ x: e.clientX, y: e.clientY });
+      }
+      const target = e.target?.closest?.('.node[id]');
+      const resolved = target && extractClickedNodeId(target.getAttribute('id'));
+      if (resolved) {
+        if (hoverClearTimeoutRef.current) {
+          clearTimeout(hoverClearTimeoutRef.current);
+          hoverClearTimeoutRef.current = null;
+        }
+        setHoveredNode({ nodeId: resolved.nodeId, rect: target.getBoundingClientRect() });
+      } else if (!hoverClearTimeoutRef.current) {
+        // Not over a node right now — but don't clear immediately. A
+        // shape's rendered outline can sit well inside its bounding box
+        // (a diamond's corners, for instance — see the connect handle's
+        // own positioning), so reaching the handle means crossing empty
+        // space that isn't `.node[id]` at all. Clearing on the spot made
+        // the handle disappear before the pointer ever reached it —
+        // a real "this isn't clickable" bug report, not a hypothetical.
+        // A short grace delay lets that crossing finish; it's cancelled
+        // above the moment the pointer re-enters a node (this one or any
+        // other), so it never causes a stale handle to linger visibly.
+        hoverClearTimeoutRef.current = setTimeout(() => {
+          hoverClearTimeoutRef.current = null;
+          setHoveredNode(null);
+        }, HOVER_CLEAR_GRACE_MS);
+      }
+    }
+
     if (!dragRef.current || !svgElRef.current || !viewRef.current) return;
     const rect = svgElRef.current.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -177,6 +344,14 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
     const dy = e.clientY - dragRef.current.startClientY;
     if (Math.abs(dx) > CLICK_MOVE_THRESHOLD || Math.abs(dy) > CLICK_MOVE_THRESHOLD) {
       dragRef.current.moved = true;
+      // A genuine pan started mid-gesture — cancel any pending click-click
+      // connect and the stale hover handle rather than leaving them on
+      // screen once the user's clearly panning, not completing a connect.
+      if (pendingConnectFrom) {
+        setPendingConnectFrom(null);
+        setPendingPointer(null);
+      }
+      setHoveredNode(null);
     }
     const v = viewRef.current;
     const dxUnits = (dx / rect.width) * v.width;
@@ -187,6 +362,73 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
       minY: dragRef.current.startMinY - dyUnits,
     };
     applyView();
+  }
+
+  // Starts a connect gesture from a hovered node's connect handle (see the
+  // JSX below) — deliberately not routed through dragRef/onPointerDown
+  // above (a *separate* gesture from panning, starting from a different
+  // element, tracked via its own plain document-level listeners scoped
+  // exactly to this one gesture's lifetime, the standard vanilla-JS drag
+  // pattern). stopPropagation on the handle's own pointerdown (see JSX)
+  // keeps this from also engaging the container's pan handling.
+  function onConnectHandlePointerDown(e, fromNodeId, fromRect) {
+    // A gesture is genuinely starting now — clear any pending grace-delay
+    // hover-clear (see onPointerMove) so it can't fire mid-gesture and wipe
+    // out the hoveredNode state the drag/pending-click logic below relies
+    // on for the drop-target highlight.
+    if (hoverClearTimeoutRef.current) {
+      clearTimeout(hoverClearTimeoutRef.current);
+      hoverClearTimeoutRef.current = null;
+    }
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let moved = false;
+    setActiveConnectDrag({ fromNodeId, fromRect, pointer: { x: startX, y: startY } });
+
+    function resolveNodeAt(x, y) {
+      const el = document.elementFromPoint(x, y);
+      const target = el?.closest?.('.node[id]');
+      if (!target) return null;
+      const resolved = extractClickedNodeId(target.getAttribute('id'));
+      return resolved ? { resolved, target } : null;
+    }
+
+    function onMove(moveEvent) {
+      if (
+        !moved &&
+        (Math.abs(moveEvent.clientX - startX) > CLICK_MOVE_THRESHOLD ||
+          Math.abs(moveEvent.clientY - startY) > CLICK_MOVE_THRESHOLD)
+      ) {
+        moved = true;
+      }
+      setActiveConnectDrag((prev) => (prev ? { ...prev, pointer: { x: moveEvent.clientX, y: moveEvent.clientY } } : prev));
+      // The container's own onPointerMove won't fire for these
+      // document-level events, so the drop-target highlight is kept in
+      // sync here instead, using the same hoveredNode state it reads from.
+      const hit = resolveNodeAt(moveEvent.clientX, moveEvent.clientY);
+      setHoveredNode(hit ? { nodeId: hit.resolved.nodeId, rect: hit.target.getBoundingClientRect() } : null);
+    }
+
+    function onUp(upEvent) {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      setActiveConnectDrag(null);
+      if (moved) {
+        const hit = resolveNodeAt(upEvent.clientX, upEvent.clientY);
+        if (hit && hit.resolved.nodeId !== fromNodeId) {
+          onConnect?.(fromNodeId, hit.resolved.nodeId);
+        }
+      } else {
+        // A plain click on the handle, not a drag — enter click-click mode:
+        // remember the source node and wait for a second click elsewhere
+        // (handleNodeClick below) to complete or cancel it.
+        setPendingConnectFrom({ nodeId: fromNodeId, rect: fromRect });
+        setPendingPointer({ x: upEvent.clientX, y: upEvent.clientY });
+      }
+    }
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
   }
 
   function endDrag(e) {
@@ -225,12 +467,54 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
   // it off the pointerup event, since pointer capture has retargeted that
   // event's own .target to the container by now.
   function handleNodeClick(downTarget) {
-    if (!onNodeClick || !downTarget?.closest) return;
+    // A click-click connect is waiting on this exact click — it takes over
+    // completely rather than falling through to the style popover below.
+    // Clicking anywhere else (empty canvas, or the source node again)
+    // still clears the pending state; it just doesn't call onConnect for a
+    // no-op self-connection.
+    if (pendingConnectFrom) {
+      const target = downTarget?.closest?.('.node[id]');
+      const resolved = target && extractClickedNodeId(target.getAttribute('id'));
+      if (resolved && resolved.nodeId !== pendingConnectFrom.nodeId) {
+        onConnect?.(pendingConnectFrom.nodeId, resolved.nodeId);
+      }
+      setPendingConnectFrom(null);
+      setPendingPointer(null);
+      return;
+    }
+    if (!downTarget?.closest) return;
     const target = downTarget.closest('.node[id]');
-    if (!target) return;
-    const resolved = extractClickedNodeId(target.getAttribute('id'));
-    if (!resolved) return;
-    onNodeClick({ ...resolved, rect: target.getBoundingClientRect() });
+    if (target) {
+      const resolved = extractClickedNodeId(target.getAttribute('id'));
+      if (resolved && onNodeClick) onNodeClick({ ...resolved, rect: target.getBoundingClientRect() });
+      return;
+    }
+
+    // Not a node — check whether it's an edge/relationship/transition
+    // instead (opens the edge popover). Each diagram kind renders edges
+    // under a different CSS class and DOM id scheme (confirmed via jsdom
+    // scratch render), so both the selector and the id-extraction function
+    // are picked per connectKind.kind rather than one shared attempt.
+    if (connectKind && onEdgeClick) {
+      const selector = EDGE_SELECTORS[connectKind.kind];
+      const edgeTarget = selector && downTarget.closest(selector);
+      let resolvedEdge = null;
+      if (edgeTarget) {
+        if (connectKind.kind === 'flowchart') {
+          resolvedEdge = extractClickedEdgeId(edgeTarget.getAttribute('id'));
+        } else if (connectKind.kind === 'state') {
+          const edgeIndex = extractClickedStateEdgeIndex(edgeTarget.getAttribute('id'));
+          resolvedEdge = edgeIndex != null ? { edgeIndex } : null;
+        } else if (connectKind.kind === 'class') {
+          resolvedEdge = extractClickedClassEdgeId(edgeTarget.getAttribute('id'), knownIds);
+        } else if (connectKind.kind === 'er') {
+          resolvedEdge = extractClickedErEdgeId(edgeTarget.getAttribute('id'));
+        }
+      }
+      if (resolvedEdge && edgeTarget) {
+        onEdgeClick({ kind: connectKind.kind, ...resolvedEdge, rect: edgeTarget.getBoundingClientRect() });
+      }
+    }
   }
 
   // Fullscreen: a CSS overlay covering the whole Custom UI panel is the
@@ -271,6 +555,91 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullscreen]);
 
+  // Escape cancels a pending click-click connect — same escape hatch as
+  // the style popover (App.jsx) and fullscreen above.
+  useEffect(() => {
+    if (!pendingConnectFrom) return undefined;
+    function onKeyDown(e) {
+      if (e.key === 'Escape') {
+        setPendingConnectFrom(null);
+        setPendingPointer(null);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pendingConnectFrom]);
+
+  // The connect handle shown on idle hover (no gesture in progress yet) —
+  // a single small dot at the node's bottom-right corner, not four
+  // compass-point anchors like Miro/Figma: unlike those tools, Mermaid's
+  // own layout engine decides where an edge actually attaches to a shape
+  // regardless of which point you dragged from, so a single handle is all
+  // this gesture needs (it's "connect this node to another," not "connect
+  // from this specific side").
+  function renderConnectHandle() {
+    if (!connectable || !hoveredNode || activeConnectDrag || pendingConnectFrom) return null;
+    const { rect } = hoveredNode;
+    // The bounding-box *corner* (the original position here) is nowhere
+    // near a diamond/decision node's actual outline — confirmed via a
+    // jsdom scratch render of a real decision node's polygon points
+    // (`15,0 30,-15 15,-30 0,-15`, relative to its own bounding box): a
+    // diamond's vertices sit at each edge's *midpoint*, never at a corner,
+    // so the corner is close to the single farthest point from the shape
+    // for exactly this shape — a real "impossible to click" bug report,
+    // not just a cosmetic nit. The right-edge midpoint, by contrast, sits
+    // exactly on a diamond's rightmost vertex, and also lands on or right
+    // at the visible edge for every other shape this palette offers
+    // (rectangle, circle, hexagon, parallelogram, ...) since they're all
+    // centered and symmetric top-to-bottom within their own bounding box.
+    return (
+      <div
+        className="connect-handle"
+        style={{ left: rect.right - 6, top: rect.top + rect.height / 2 - 6 }}
+        title="Drag to another node to connect them, or click and then click another node"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onConnectHandlePointerDown(e, hoveredNode.nodeId, rect);
+        }}
+      />
+    );
+  }
+
+  // Highlights whatever node is currently under the pointer while a
+  // connect gesture (drag or click-click) is active, as a "drop here"
+  // affordance — but not the gesture's own source node, which would just
+  // be confusing (it's already the thing being connected *from*).
+  function renderConnectTarget() {
+    const sourceId = activeConnectDrag?.fromNodeId ?? pendingConnectFrom?.nodeId;
+    if (!sourceId || !hoveredNode || hoveredNode.nodeId === sourceId) return null;
+    const { rect } = hoveredNode;
+    return (
+      <div
+        className="connect-target-highlight"
+        style={{ left: rect.left - 4, top: rect.top - 4, width: rect.width + 8, height: rect.height + 8 }}
+      />
+    );
+  }
+
+  // The live rubber-band line, screen-space (viewport pixels straight from
+  // getBoundingClientRect()/clientX/clientY — no viewBox/zoom transform
+  // needed, unlike the diagram's own pan/zoom, since this overlay isn't
+  // part of the panned/zoomed SVG at all). pointer-events: none (styles.css)
+  // is load-bearing here: without it, this element — not the node
+  // underneath — is what document.elementFromPoint() would find on drop.
+  function renderConnectLine() {
+    const from = activeConnectDrag?.fromRect ?? pendingConnectFrom?.rect;
+    const pointer = activeConnectDrag?.pointer ?? (pendingConnectFrom ? pendingPointer : null);
+    if (!from || !pointer) return null;
+    const x1 = from.left + from.width / 2;
+    const y1 = from.top + from.height / 2;
+    return (
+      <svg className="connect-drag-line-overlay">
+        <line x1={x1} y1={y1} x2={pointer.x} y2={pointer.y} />
+      </svg>
+    );
+  }
+
   return (
     <div
       ref={wrapRef}
@@ -290,29 +659,42 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: svg }}
       />
+      {renderConnectHandle()}
+      {renderConnectTarget()}
+      {renderConnectLine()}
+      {/* One rounded pill instead of four separately-bordered buttons
+          ([-][100%][+][⛶], per direct user request referencing Figma/Miro's
+          zoom control) — the percent readout doubles as the reset button
+          (title="Reset zoom"), so there's no separate ⤢ button anymore. */}
       <div className="diagram-zoom-controls">
         <button
           type="button"
-          className="btn btn-subtle btn-icon"
+          className="zoom-control-btn"
           title="Zoom out (or Ctrl+scroll)"
           onClick={() => zoomAt(1 / ZOOM_STEP)}
         >
           −
         </button>
-        <button type="button" className="btn btn-subtle btn-icon" title="Reset zoom" onClick={resetView}>
-          ⤢
+        <button
+          type="button"
+          className="zoom-control-btn zoom-control-percent"
+          title="Reset zoom"
+          onClick={resetView}
+        >
+          {zoomPercent}%
         </button>
         <button
           type="button"
-          className="btn btn-subtle btn-icon"
+          className="zoom-control-btn"
           title="Zoom in (or Ctrl+scroll)"
           onClick={() => zoomAt(ZOOM_STEP)}
         >
           +
         </button>
+        <div className="zoom-control-divider" />
         <button
           type="button"
-          className="btn btn-subtle btn-icon"
+          className="zoom-control-btn"
           title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
           onClick={toggleFullscreen}
         >

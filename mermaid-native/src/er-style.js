@@ -11,16 +11,14 @@
 // mirrors state-style.js's two-line mechanism, not node-style.js's one-line
 // one, even though the two diagram types don't share source syntax either.
 
+import { detectDiagramKind } from './diagram-kind.js';
+
 const RESERVED_WORDS = new Set(['erDiagram', 'classDef', 'class']);
 
 const ER_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isERDiagramSource(source) {
-  const firstContentLine = (source || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith('%%'));
-  return !!firstContentLine && /^erDiagram\b/.test(firstContentLine);
+  return detectDiagramKind(source) === 'er';
 }
 
 /**

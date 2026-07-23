@@ -9,6 +9,7 @@
 // deterministic per-state class name (`nodeStyle_<stateId>`), so it reads
 // and writes like a single per-state style even though it's backed by two
 // source lines.
+import { detectDiagramKind } from './diagram-kind.js';
 
 const RESERVED_WORDS = new Set([
   'stateDiagram',
@@ -32,11 +33,7 @@ const RESERVED_WORDS = new Set([
 const STATE_STYLE_PROPS = ['fill', 'stroke', 'stroke-width', 'color'];
 
 export function isStateDiagramSource(source) {
-  const firstContentLine = (source || '')
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l && !l.startsWith('%%'));
-  return !!firstContentLine && /^stateDiagram(-v2)?\b/.test(firstContentLine);
+  return detectDiagramKind(source) === 'state';
 }
 
 /**
@@ -78,6 +75,20 @@ export function parseStateIds(source) {
     const bareMatch = trimmed.match(/^state\s+([A-Za-z_]\w*)\s*$/);
     if (bareMatch) {
       ids.add(bareMatch[1]);
+      return;
+    }
+
+    // `state ChoiceId <<choice>>` (also `<<fork>>`/`<<join>>`) — a
+    // pseudostate-type declaration, distinct from the bare/composite/alias
+    // forms above since it has trailing `<<...>>` content after the id.
+    // Needed so diagram-palette.js's "Choice" entry can find previously
+    // inserted choice ids via nextAvailableId — missing this meant a second
+    // click could reuse the same id and silently produce two conflicting
+    // declarations, the same class of bug node-style.js's parseFlowchartNodeIds
+    // once had for `@{...}` declarations.
+    const pseudoStateMatch = trimmed.match(/^state\s+([A-Za-z_]\w*)\s+<<\w+>>\s*$/);
+    if (pseudoStateMatch) {
+      ids.add(pseudoStateMatch[1]);
       return;
     }
 
