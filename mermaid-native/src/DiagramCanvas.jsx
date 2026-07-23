@@ -23,6 +23,16 @@ const CLICK_MOVE_THRESHOLD = 6;
 // instant.
 const HOVER_CLEAR_GRACE_MS = 350;
 
+// Each diagram kind renders edges under its own CSS class (confirmed via
+// jsdom scratch render) — used both to widen click hit areas and to
+// dispatch edge-click detection to the right id-extraction function below.
+const EDGE_SELECTORS = {
+  flowchart: '.flowchart-link[id]',
+  state: '.transition[id]',
+  class: '.relation[id]',
+  er: '.relationshipLine[id]',
+};
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -140,6 +150,35 @@ export default function DiagramCanvas({
     applyView();
     setZoomPercent(100);
   }, [svg]);
+
+  // Mermaid's own edge/relationship/transition strokes render thin (often
+  // 1-2px) — clicking one to open the edge popover was reported as "you can
+  // barely click on them." Widens the *hit area* without changing the
+  // visible line: for each edge matching this diagram kind's own CSS class,
+  // clones it into an invisible sibling path with a much fatter
+  // `stroke-width`, sharing the same `d`, `class`, and `id` (so
+  // handleNodeClick's `closest('<selector>[id]')` + id-extraction logic
+  // below works unchanged against either element) but `stroke="transparent"`
+  // and no markers, so it adds no visible pixels of its own — it only
+  // exists to be a bigger target for the pointer to land on. Inserted right
+  // after the original so it paints on top and wins the hit-test.
+  useEffect(() => {
+    const container = containerRef.current;
+    const selector = connectKind && EDGE_SELECTORS[connectKind.kind];
+    if (!container || !selector) return;
+    container.querySelectorAll(selector).forEach((path) => {
+      const hitPath = path.cloneNode(false);
+      hitPath.removeAttribute('style');
+      hitPath.removeAttribute('marker-start');
+      hitPath.removeAttribute('marker-end');
+      hitPath.setAttribute('fill', 'none');
+      hitPath.setAttribute('stroke', 'transparent');
+      hitPath.setAttribute('stroke-width', '14');
+      hitPath.setAttribute('pointer-events', 'stroke');
+      path.parentNode.insertBefore(hitPath, path.nextSibling);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svg, connectKind]);
 
   // A narrower view (viewRef.width) than the diagram's natural size
   // (baseViewBoxRef.width) means zoomed in, hence the inverse ratio.
@@ -457,21 +496,20 @@ export default function DiagramCanvas({
     // scratch render), so both the selector and the id-extraction function
     // are picked per connectKind.kind rather than one shared attempt.
     if (connectKind && onEdgeClick) {
-      let edgeTarget = null;
+      const selector = EDGE_SELECTORS[connectKind.kind];
+      const edgeTarget = selector && downTarget.closest(selector);
       let resolvedEdge = null;
-      if (connectKind.kind === 'flowchart') {
-        edgeTarget = downTarget.closest('.flowchart-link[id]');
-        resolvedEdge = edgeTarget && extractClickedEdgeId(edgeTarget.getAttribute('id'));
-      } else if (connectKind.kind === 'state') {
-        edgeTarget = downTarget.closest('.transition[id]');
-        const edgeIndex = edgeTarget && extractClickedStateEdgeIndex(edgeTarget.getAttribute('id'));
-        resolvedEdge = edgeIndex != null ? { edgeIndex } : null;
-      } else if (connectKind.kind === 'class') {
-        edgeTarget = downTarget.closest('.relation[id]');
-        resolvedEdge = edgeTarget && extractClickedClassEdgeId(edgeTarget.getAttribute('id'), knownIds);
-      } else if (connectKind.kind === 'er') {
-        edgeTarget = downTarget.closest('.relationshipLine[id]');
-        resolvedEdge = edgeTarget && extractClickedErEdgeId(edgeTarget.getAttribute('id'));
+      if (edgeTarget) {
+        if (connectKind.kind === 'flowchart') {
+          resolvedEdge = extractClickedEdgeId(edgeTarget.getAttribute('id'));
+        } else if (connectKind.kind === 'state') {
+          const edgeIndex = extractClickedStateEdgeIndex(edgeTarget.getAttribute('id'));
+          resolvedEdge = edgeIndex != null ? { edgeIndex } : null;
+        } else if (connectKind.kind === 'class') {
+          resolvedEdge = extractClickedClassEdgeId(edgeTarget.getAttribute('id'), knownIds);
+        } else if (connectKind.kind === 'er') {
+          resolvedEdge = extractClickedErEdgeId(edgeTarget.getAttribute('id'));
+        }
       }
       if (resolvedEdge && edgeTarget) {
         onEdgeClick({ kind: connectKind.kind, ...resolvedEdge, rect: edgeTarget.getBoundingClientRect() });

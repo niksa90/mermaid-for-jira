@@ -39,6 +39,9 @@
 // with "Manual Operation" (a trapezoid, `[/...\]`), which does.
 import { detectDiagramKind } from './diagram-kind.js';
 import { parseFlowchartNodeIds } from './node-style.js';
+import { parseStateIds } from './state-style.js';
+import { parseERIds } from './er-style.js';
+import { parseClassIds } from './diagram-connect.js';
 
 function appendLines(source, newLines) {
   const lines = (source || '').split('\n');
@@ -236,9 +239,76 @@ function sequenceEntries() {
   ];
 }
 
+// Both confirmed against the real parser: a state can be declared standalone
+// (`state StateName`, no transition needed) and a `<<choice>>` pseudostate
+// likewise doesn't need any transition referencing it yet to be valid on
+// its own — same "insert an unconnected declaration, wire it up afterward
+// via Connect" pattern as every other palette entry.
+function stateEntries() {
+  return [
+    {
+      id: 'state',
+      label: 'State',
+      glyph: '◉',
+      insert(source) {
+        const base = ensureHeader(source, 'stateDiagram-v2');
+        return appendLines(base, [`state ${nextAvailableId(parseStateIds(base))}`]);
+      },
+    },
+    {
+      id: 'choice',
+      label: 'Choice',
+      glyph: '◈',
+      insert(source) {
+        const base = ensureHeader(source, 'stateDiagram-v2');
+        return appendLines(base, [`state ${nextAvailableId(parseStateIds(base))} <<choice>>`]);
+      },
+    },
+  ];
+}
+
+function classEntries() {
+  return [
+    {
+      id: 'class',
+      label: 'Class',
+      glyph: '▦',
+      insert(source) {
+        const base = ensureHeader(source, 'classDiagram');
+        return appendLines(base, [`class ${nextAvailableId(parseClassIds(base))}`]);
+      },
+    },
+  ];
+}
+
+function erEntries() {
+  return [
+    {
+      id: 'entity',
+      label: 'Entity',
+      glyph: '▤',
+      insert(source) {
+        const base = ensureHeader(source, 'erDiagram');
+        // An empty attribute block (`Entity {\n}`), not a bare identifier
+        // line — confirmed both parse standalone, but parseERIds (shared
+        // with the per-node style picker) only recognizes the block form
+        // or a relationship-line endpoint for a standalone declaration; a
+        // bare line would be invisible to it, so a second click could
+        // reuse the same id and silently overwrite the first entity, same
+        // class of bug the flowchart palette had with @{...} declarations.
+        const entityId = nextAvailableId(parseERIds(base));
+        return appendLines(base, [`${entityId} {`, `}`]);
+      },
+    },
+  ];
+}
+
 const PALETTE_BUILDERS = {
   flowchart: flowchartEntries,
   sequence: sequenceEntries,
+  state: stateEntries,
+  class: classEntries,
+  er: erEntries,
 };
 
 /**

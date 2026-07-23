@@ -31,7 +31,11 @@ import {
   connectNodes,
   parseClassIds,
   deleteFlowchartEdge,
+  readFlowchartEdgeLabel,
+  setFlowchartEdgeLabel,
   deleteStateEdge,
+  readStateEdgeAtIndex,
+  setStateEdgeLabelAtIndex,
   readClassEdge,
   deleteClassEdge,
   setClassEdge,
@@ -259,9 +263,6 @@ export default function App() {
   const [edgePopover, setEdgePopover] = useState(null);
   const edgePopoverRef = useRef(null);
   const [edgePopoverTop, setEdgePopoverTop] = useState(0);
-  // Local draft for the edge popover's label input — see the sync effect
-  // below for why this isn't bound directly to the source text.
-  const [edgeLabelDraft, setEdgeLabelDraft] = useState('');
   // Whether the panel is effectively rendering in dark mode (see
   // resolveEffectiveDark) — used only to pick a new diagram's starting
   // Mermaid theme (see addDiagram); never re-applied to existing diagrams.
@@ -404,26 +405,6 @@ export default function App() {
     setEdgePopoverTop(clampPopoverTop(edgePopover.rect, edgePopoverRef.current.getBoundingClientRect().height));
   }, [edgePopover]);
 
-  // Seeds the label-editing draft from whatever's currently in the source
-  // whenever the edge popover opens (or its target edge changes) — plain
-  // useState + sync-on-open, not a live binding straight to source, so
-  // keystrokes don't fire a save (or re-render the diagram) on every
-  // character; committed on blur, same pattern as the Section field (see
-  // CLAUDE.md's Section-input gotcha) and for the same reason: this data
-  // feeds back into the source text the popover itself is reading from.
-  useEffect(() => {
-    if (!edgePopover) return;
-    const diagram = latestDiagramsRef.current.find((d) => d.id === edgePopover.diagramId);
-    if (!diagram) return;
-    const info =
-      edgePopover.kind === 'class'
-        ? readClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
-        : edgePopover.kind === 'er'
-          ? readErEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
-          : null;
-    setEdgeLabelDraft(info?.label || '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edgePopover]);
 
   // Closes the click-to-style popover on Escape or on any pointerdown
   // outside it — including the pointerdown that starts panning the canvas
@@ -995,42 +976,69 @@ export default function App() {
     // silently rather than operating on a stale edge reference.
     if (!connectKind || connectKind.kind !== edgePopover.kind) return null;
 
-    const current =
-      connectKind.kind === 'class'
-        ? readClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
-        : connectKind.kind === 'er'
-          ? readErEdge(diagram.source, edgePopover.fromId, edgePopover.toId)
-          : null;
-    // The edge itself no longer exists on this exact line (source was
-    // hand-edited out from under the popover) — nothing left to show.
-    if (connectKind.arrowOptions && !current) return null;
+    // Reads the edge's current arrow/cardinality (class/ER only) and label
+    // (every kind) fresh from diagram.source on every render, rather than a
+    // local draft state synced once on open. Unlike the Section field (see
+    // CLAUDE.md's Section-input gotcha), a label isn't used as a React key
+    // anywhere — nothing here remounts mid-edit — so binding the input
+    // straight to source and writing on every keystroke is safe, and fixes
+    // a real bug the draft-state version had: closing the popover via an
+    // outside click (or pressing Enter, which doesn't blur a plain text
+    // input) never gave the draft's onBlur handler a chance to fire, so an
+    // edit only ever "took" if the user happened to Tab out of the field.
+    let arrowId = null;
+    let label = '';
+    if (connectKind.kind === 'flowchart') {
+      label = readFlowchartEdgeLabel(diagram.source, edgePopover.fromId, edgePopover.toId);
+      if (label === null) return null; // edge line no longer matches (source hand-edited)
+    } else if (connectKind.kind === 'state') {
+      const info = readStateEdgeAtIndex(diagram.source, edgePopover.edgeIndex);
+      if (!info) return null;
+      label = info.label;
+    } else if (connectKind.kind === 'class') {
+      const info = readClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+      if (!info) return null;
+      arrowId = info.arrowId;
+      label = info.label;
+    } else if (connectKind.kind === 'er') {
+      const info = readErEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+      if (!info) return null;
+      arrowId = info.arrowId;
+      label = info.label;
+    }
 
-    function applyArrow(arrowId) {
+    function applyArrow(nextArrowId) {
       const setEdge = connectKind.kind === 'class' ? setClassEdge : setErEdge;
       updateDiagram(
         diagram.id,
-        { source: setEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, edgeLabelDraft) },
+        { source: setEdge(diagram.source, edgePopover.fromId, edgePopover.toId, nextArrowId, label) },
         { immediate: true }
       );
     }
 
-    function commitLabel() {
-      if (!current) return;
-      const setEdge = connectKind.kind === 'class' ? setClassEdge : setErEdge;
-      updateDiagram(
-        diagram.id,
-        { source: setEdge(diagram.source, edgePopover.fromId, edgePopover.toId, current.arrowId, edgeLabelDraft) },
-        { immediate: true }
-      );
-      flushSave();
+    // Not `{ immediate: true }` — this fires on every keystroke, same as
+    // the main CodeMirror editor's onChange, and relies on the same
+    // debounced-save path (flushed on blur below) rather than a network
+    // call per character.
+    function applyLabel(nextLabel) {
+      let nextSource;
+      if (connectKind.kind === 'flowchart') {
+        nextSource = setFlowchartEdgeLabel(diagram.source, edgePopover.fromId, edgePopover.toId, nextLabel);
+      } else if (connectKind.kind === 'state') {
+        nextSource = setStateEdgeLabelAtIndex(diagram.source, edgePopover.edgeIndex, nextLabel);
+      } else if (connectKind.kind === 'class') {
+        nextSource = setClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, nextLabel);
+      } else {
+        nextSource = setErEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, nextLabel);
+      }
+      updateDiagram(diagram.id, { source: nextSource });
     }
 
     const style = {
       left: Math.max(8, edgePopover.rect.left + edgePopover.rect.width / 2),
       top: edgePopoverTop,
     };
-    const title =
-      connectKind.kind === 'state' ? 'Transition' : `${edgePopover.fromId} → ${edgePopover.toId}`;
+    const title = connectKind.kind === 'state' ? 'Transition' : `${edgePopover.fromId} → ${edgePopover.toId}`;
 
     return (
       <div className="node-style-popover" ref={edgePopoverRef} style={style}>
@@ -1048,7 +1056,7 @@ export default function App() {
         {connectKind.arrowOptions && (
           <div className="node-style-popover-row">
             <span className="node-style-popover-label">Type</span>
-            <select className="select-input" value={current.arrowId} onChange={(e) => applyArrow(e.target.value)}>
+            <select className="select-input" value={arrowId} onChange={(e) => applyArrow(e.target.value)}>
               {connectKind.arrowOptions.map((opt) => (
                 <option key={opt.id} value={opt.id}>
                   {opt.label}
@@ -1057,19 +1065,17 @@ export default function App() {
             </select>
           </div>
         )}
-        {connectKind.arrowOptions && (
-          <div className="node-style-popover-row">
-            <span className="node-style-popover-label">Label</span>
-            <input
-              type="text"
-              className="text-input"
-              value={edgeLabelDraft}
-              onChange={(e) => setEdgeLabelDraft(e.target.value)}
-              onBlur={commitLabel}
-              placeholder={connectKind.needsLabel ? 'Required' : 'Optional'}
-            />
-          </div>
-        )}
+        <div className="node-style-popover-row">
+          <span className="node-style-popover-label">Label</span>
+          <input
+            type="text"
+            className="text-input"
+            value={label}
+            onChange={(e) => applyLabel(e.target.value)}
+            onBlur={() => flushSave()}
+            placeholder={connectKind.needsLabel ? 'Required' : 'Optional'}
+          />
+        </div>
         <button type="button" className="btn btn-subtle node-style-popover-reset" onClick={deleteCurrentEdge}>
           <span className="node-style-popover-reset-icon" aria-hidden="true">
             ✕

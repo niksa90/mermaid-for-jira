@@ -5,7 +5,11 @@ import {
   resolveConnectKind,
   connectNodes,
   deleteFlowchartEdge,
+  readFlowchartEdgeLabel,
+  setFlowchartEdgeLabel,
   deleteStateEdge,
+  readStateEdgeAtIndex,
+  setStateEdgeLabelAtIndex,
   parseClassIds,
   readClassEdge,
   deleteClassEdge,
@@ -63,12 +67,12 @@ test('connectNodes uses the default association arrow for class diagrams, or a c
   );
 });
 
-test('connectNodes always includes a label for ER (mandatory in Mermaid syntax), defaulting to a placeholder', () => {
+test('connectNodes always includes a quoted label for ER (mandatory in Mermaid syntax, and unquoted multi-word labels fail to parse), defaulting to a placeholder', () => {
   const source = 'erDiagram\n  A\n  B';
-  assert.equal(connectNodes(source, 'A', 'B'), 'erDiagram\n  A\n  B\nA ||--o{ B : relates to');
+  assert.equal(connectNodes(source, 'A', 'B'), 'erDiagram\n  A\n  B\nA ||--o{ B : "relates to"');
   assert.equal(
     connectNodes(source, 'A', 'B', { arrowId: 'one-to-one', label: 'owns' }),
-    'erDiagram\n  A\n  B\nA ||--|| B : owns'
+    'erDiagram\n  A\n  B\nA ||--|| B : "owns"'
   );
 });
 
@@ -133,12 +137,60 @@ test('readClassEdge / deleteClassEdge / setClassEdge round-trip a class relation
   );
 });
 
-test('readErEdge / deleteErEdge / setErEdge round-trip an ER relationship, defaulting a cleared label', () => {
+test('readErEdge / deleteErEdge / setErEdge round-trip an ER relationship, reading both bare and quoted labels', () => {
   const source = 'erDiagram\n  CUSTOMER ||--o{ ORDER : places';
   assert.deepEqual(readErEdge(source, 'CUSTOMER', 'ORDER'), { arrowId: 'one-to-many', label: 'places' });
   assert.equal(deleteErEdge(source, 'CUSTOMER', 'ORDER'), 'erDiagram');
+
+  const quotedSource = 'erDiagram\n  CUSTOMER ||--o{ ORDER : "places an order"';
+  assert.deepEqual(readErEdge(quotedSource, 'CUSTOMER', 'ORDER'), {
+    arrowId: 'one-to-many',
+    label: 'places an order',
+  });
+});
+
+// ER relationships require a label to parse at all, and a multi-word label
+// fails unless quoted (confirmed via the real parser) — setErEdge always
+// quotes, unlike setClassEdge, and never falls back to a default: an empty
+// quoted label (`: ""`) is itself valid syntax, so a cleared field is
+// respected rather than snapped back to a placeholder mid-edit.
+test('setErEdge always quotes the label, including a multi-word one, and respects an intentionally cleared label', () => {
+  const source = 'erDiagram\n  CUSTOMER ||--o{ ORDER : places';
   assert.equal(
-    setErEdge(source, 'CUSTOMER', 'ORDER', 'one-to-one', ''),
-    'erDiagram\nCUSTOMER ||--|| ORDER : relates to'
+    setErEdge(source, 'CUSTOMER', 'ORDER', 'one-to-one', 'owns many things'),
+    'erDiagram\nCUSTOMER ||--|| ORDER : "owns many things"'
   );
+  assert.equal(setErEdge(source, 'CUSTOMER', 'ORDER', 'one-to-one', ''), 'erDiagram\nCUSTOMER ||--|| ORDER : ""');
+});
+
+test('readFlowchartEdgeLabel / setFlowchartEdgeLabel round-trip a flowchart edge label, preserving shapes and arrow style', () => {
+  const source = 'flowchart TD\n  A[Start] --> B[End]';
+  assert.equal(readFlowchartEdgeLabel(source, 'A', 'B'), '');
+  const labeled = setFlowchartEdgeLabel(source, 'A', 'B', 'go now');
+  assert.equal(labeled, 'flowchart TD\nA[Start] -->|go now| B[End]');
+  assert.equal(readFlowchartEdgeLabel(labeled, 'A', 'B'), 'go now');
+  assert.equal(setFlowchartEdgeLabel(labeled, 'A', 'B', ''), 'flowchart TD\nA[Start] --> B[End]');
+});
+
+test('setFlowchartEdgeLabel preserves a non-default arrow style (dotted, thick, ...)', () => {
+  const source = 'flowchart TD\n  A -.->|maybe| B';
+  assert.equal(setFlowchartEdgeLabel(source, 'A', 'B', 'changed'), 'flowchart TD\nA -.->|changed| B');
+});
+
+test('readFlowchartEdgeLabel returns null for a chained arrow line it does not fully recognize', () => {
+  assert.equal(readFlowchartEdgeLabel('flowchart TD\n  A --> B --> C', 'A', 'B'), null);
+});
+
+test('readStateEdgeAtIndex / setStateEdgeLabelAtIndex round-trip a state transition label positionally', () => {
+  const source = 'stateDiagram-v2\n  [*] --> A\n  A --> B : go\n  B --> A';
+  assert.deepEqual(readStateEdgeAtIndex(source, 1), { fromId: 'A', toId: 'B', label: 'go' });
+  assert.equal(
+    setStateEdgeLabelAtIndex(source, 0, 'hi'),
+    'stateDiagram-v2\n[*] --> A : hi\n  A --> B : go\n  B --> A'
+  );
+  assert.equal(setStateEdgeLabelAtIndex(source, 1, ''), 'stateDiagram-v2\n  [*] --> A\nA --> B\n  B --> A');
+});
+
+test('readStateEdgeAtIndex returns null for an out-of-range index', () => {
+  assert.equal(readStateEdgeAtIndex('stateDiagram-v2\n  A --> B', 5), null);
 });

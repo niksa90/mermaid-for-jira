@@ -17,7 +17,6 @@ test('nextAvailableId skips gaps and wraps to a numbered suffix once A-Z is exha
 test('resolvePaletteKind returns null for diagram types with no palette yet', () => {
   assert.equal(resolvePaletteKind('pie title x\n  "A" : 1'), null);
   assert.equal(resolvePaletteKind('gantt\n  title x'), null);
-  assert.equal(resolvePaletteKind('classDiagram\n  class Animal'), null);
 });
 
 // A blank source has no diagram-type keyword for detectDiagramKind to find
@@ -127,4 +126,54 @@ test('sequence block entries fall back to fresh ids when there are no existing p
   const opt = palette.entries.find((e) => e.id === 'opt');
   const next = opt.insert(source);
   assert.match(next, /opt condition\n {4}A->>B: message\nend$/);
+});
+
+test('resolvePaletteKind recognizes state diagrams and offers State/Choice entries', () => {
+  const palette = resolvePaletteKind('stateDiagram-v2\n  [*] --> A');
+  assert.equal(palette.kind, 'state');
+  assert.deepEqual(
+    palette.entries.map((e) => e.id),
+    ['state', 'choice']
+  );
+});
+
+test('the State entry appends a bare declaration with a fresh id, not colliding with existing states', () => {
+  const source = 'stateDiagram-v2\n  [*] --> A\n  A --> B';
+  const palette = resolvePaletteKind(source);
+  const state = palette.entries.find((e) => e.id === 'state');
+  assert.equal(state.insert(source), 'stateDiagram-v2\n  [*] --> A\n  A --> B\nstate C');
+});
+
+test('the Choice entry appends a <<choice>> pseudostate, and a second click does not collide with the first', () => {
+  const source = 'stateDiagram-v2\n  [*] --> A';
+  const palette = resolvePaletteKind(source);
+  const choice = palette.entries.find((e) => e.id === 'choice');
+  const once = choice.insert(source);
+  assert.equal(once, 'stateDiagram-v2\n  [*] --> A\nstate B <<choice>>');
+  const twice = choice.insert(once);
+  assert.equal(twice, 'stateDiagram-v2\n  [*] --> A\nstate B <<choice>>\nstate C <<choice>>');
+});
+
+test('resolvePaletteKind recognizes class diagrams and offers a Class entry', () => {
+  const source = 'classDiagram\n  class Animal';
+  const palette = resolvePaletteKind(source);
+  assert.equal(palette.kind, 'class');
+  const classEntry = palette.entries.find((e) => e.id === 'class');
+  assert.equal(classEntry.insert(source), 'classDiagram\n  class Animal\nclass A');
+});
+
+test('resolvePaletteKind recognizes ER diagrams and offers an Entity entry using the recognized block form', () => {
+  const source = 'erDiagram\n  CUSTOMER ||--o{ ORDER : places';
+  const palette = resolvePaletteKind(source);
+  assert.equal(palette.kind, 'er');
+  const entity = palette.entries.find((e) => e.id === 'entity');
+  const next = entity.insert(source);
+  assert.equal(next, 'erDiagram\n  CUSTOMER ||--o{ ORDER : places\nA {\n}');
+});
+
+test('the Entity entry avoids colliding with a previously-inserted entity on a second click', () => {
+  const source = 'erDiagram\n  A {\n}';
+  const palette = resolvePaletteKind(source);
+  const entity = palette.entries.find((e) => e.id === 'entity');
+  assert.equal(entity.insert(source), 'erDiagram\n  A {\n}\nB {\n}');
 });

@@ -78,6 +78,20 @@ export function parseStateIds(source) {
       return;
     }
 
+    // `state ChoiceId <<choice>>` (also `<<fork>>`/`<<join>>`) — a
+    // pseudostate-type declaration, distinct from the bare/composite/alias
+    // forms above since it has trailing `<<...>>` content after the id.
+    // Needed so diagram-palette.js's "Choice" entry can find previously
+    // inserted choice ids via nextAvailableId — missing this meant a second
+    // click could reuse the same id and silently produce two conflicting
+    // declarations, the same class of bug node-style.js's parseFlowchartNodeIds
+    // once had for `@{...}` declarations.
+    const pseudoStateMatch = trimmed.match(/^state\s+([A-Za-z_]\w*)\s+<<\w+>>\s*$/);
+    if (pseudoStateMatch) {
+      ids.add(pseudoStateMatch[1]);
+      return;
+    }
+
     const descMatch = trimmed.match(/^([A-Za-z_]\w*)\s*:\s*.+$/);
     if (descMatch) {
       ids.add(descMatch[1]);

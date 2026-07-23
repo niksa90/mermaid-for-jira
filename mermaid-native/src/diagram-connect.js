@@ -59,6 +59,15 @@ export const ER_CARDINALITIES = [
 
 const DEFAULT_ER_LABEL = 'relates to';
 
+// ER labels containing a space fail to parse unless quoted — confirmed via
+// the real parser (a bare `A ||--o{ B : relates to` is a parse error, but
+// `: "relates to"` and `: relates` both parse). Always quoting sidesteps
+// having to detect "does this specific label need it" and matches what a
+// single-word label looks like quoted anyway (also confirmed to parse).
+function quoteErLabel(label) {
+  return `"${(label || '').replace(/"/g, '')}"`;
+}
+
 /**
  * Resolves what the connect gesture can offer for `source`'s diagram type,
  * or `null` if this diagram type has no connect support at all. Mirrors
@@ -145,7 +154,7 @@ export function connectNodes(source, fromId, toId, opts = {}) {
   } else if (connectKind.kind === 'er') {
     const arrow =
       ER_CARDINALITIES.find((a) => a.id === (opts.arrowId || connectKind.defaultArrowId)) || ER_CARDINALITIES[0];
-    line = `${fromId} ${arrow.syntax} ${toId} : ${opts.label || DEFAULT_ER_LABEL}`;
+    line = `${fromId} ${arrow.syntax} ${toId} : ${quoteErLabel(opts.label || DEFAULT_ER_LABEL)}`;
   } else {
     line = `${fromId} --> ${toId}`;
   }
@@ -194,6 +203,48 @@ export function deleteFlowchartEdge(source, fromId, toId) {
   return lines.join('\n');
 }
 
+function flowchartEdgeLineRegex(fromId, toId) {
+  return new RegExp(
+    `^\\s*${fromId}${SHAPE_GROUP}\\s*(${FLOWCHART_ARROW})\\s*(?:\\|([^|]*)\\|\\s*)?${toId}${SHAPE_GROUP}\\s*$`
+  );
+}
+
+/**
+ * Returns the current arrow-label text for the flowchart edge connecting
+ * fromId -> toId (`''` if it has none), or `null` if no line matches at
+ * all (edge no longer exists in this exact shape). Preserves the line's
+ * existing shapes and arrow style (solid/dotted/thick/...) — only the
+ * `|label|` portion is inspected/rewritten by this and setFlowchartEdgeLabel.
+ */
+export function readFlowchartEdgeLabel(source, fromId, toId) {
+  const lines = (source || '').split('\n');
+  for (const line of lines) {
+    const m = line.match(flowchartEdgeLineRegex(fromId, toId));
+    if (m) return m[3] || '';
+  }
+  return null;
+}
+
+/**
+ * Rewrites the flowchart edge connecting fromId -> toId in place, setting
+ * (or clearing) its `|label|`. Preserves both ends' shapes and the arrow's
+ * own style — only the label changes. No-op if no line matches (same
+ * "best-effort, doesn't touch a line it doesn't fully recognize" tradeoff
+ * as deleteFlowchartEdge — a chained multi-arrow line is left untouched
+ * rather than partially rewritten).
+ */
+export function setFlowchartEdgeLabel(source, fromId, toId, label) {
+  const lines = (source || '').split('\n');
+  const re = flowchartEdgeLineRegex(fromId, toId);
+  const idx = lines.findIndex((line) => re.test(line));
+  if (idx === -1) return source || '';
+  const [, fromShape = '', arrow, , toShape = ''] = lines[idx].match(re);
+  lines[idx] = label
+    ? `${fromId}${fromShape} ${arrow}|${label}| ${toId}${toShape}`
+    : `${fromId}${fromShape} ${arrow} ${toId}${toShape}`;
+  return lines.join('\n');
+}
+
 /**
  * Removes the Nth transition line (0-based, in source order — see
  * extractClickedStateEdgeIndex in svg-node-id.js for why state edges are
@@ -214,6 +265,42 @@ export function deleteStateEdge(source, edgeIndex) {
   });
   if (lineIndex === -1) return source || '';
   lines.splice(lineIndex, 1);
+  return lines.join('\n');
+}
+
+const STATE_TRANSITION_RE = /^(\[\*\]|[A-Za-z_]\w*)\s*-->\s*(\[\*\]|[A-Za-z_]\w*)\s*(?::\s*(.*))?$/;
+
+/**
+ * Returns `{ fromId, toId, label }` for the Nth transition line (0-based,
+ * same source-order indexing as deleteStateEdge), or `null` if out of
+ * range.
+ */
+export function readStateEdgeAtIndex(source, edgeIndex) {
+  if (edgeIndex == null || edgeIndex < 0) return null;
+  const lines = (source || '').split('\n');
+  let count = -1;
+  for (const line of lines) {
+    const m = line.trim().match(STATE_TRANSITION_RE);
+    if (!m) continue;
+    count += 1;
+    if (count === edgeIndex) return { fromId: m[1], toId: m[2], label: m[3] || '' };
+  }
+  return null;
+}
+
+/** Rewrites the Nth transition line (0-based) to set (or clear) its `: label`. No-op if `edgeIndex` is out of range. */
+export function setStateEdgeLabelAtIndex(source, edgeIndex, label) {
+  const current = readStateEdgeAtIndex(source, edgeIndex);
+  if (!current) return source || '';
+  const lines = (source || '').split('\n');
+  let count = -1;
+  const idx = lines.findIndex((line) => {
+    if (!STATE_TRANSITION_RE.test(line.trim())) return false;
+    count += 1;
+    return count === edgeIndex;
+  });
+  if (idx === -1) return source || '';
+  lines[idx] = label ? `${current.fromId} --> ${current.toId} : ${label}` : `${current.fromId} --> ${current.toId}`;
   return lines.join('\n');
 }
 
@@ -262,9 +349,14 @@ export function setClassEdge(source, fromId, toId, arrowId, label) {
   return lines.join('\n');
 }
 
+// Matches either a quoted (`"..."`) or bare label — reading has to accept
+// both since a hand-typed diagram might use either, even though this app's
+// own writes always emit the quoted form (see quoteErLabel above).
+const ER_LABEL_GROUP = '(?:"([^"]*)"|([^\\s][^\\r\\n]*)?)';
+
 function erEdgeRegex(fromId, toId) {
   const cardPattern = ER_CARDINALITIES.map((a) => escapeRegex(a.syntax)).join('|');
-  return new RegExp(`^\\s*${fromId}\\s*(?:${cardPattern})\\s*${toId}\\s*:\\s*(.*)\\s*$`);
+  return new RegExp(`^\\s*${fromId}\\s*(?:${cardPattern})\\s*${toId}\\s*:\\s*${ER_LABEL_GROUP}\\s*$`);
 }
 
 /** Returns `{ arrowId, label }` for the ER relationship line connecting fromId -> toId, or null if none is found. */
@@ -273,9 +365,9 @@ export function readErEdge(source, fromId, toId) {
   for (const line of lines) {
     const trimmed = line.trim();
     for (const card of ER_CARDINALITIES) {
-      const re = new RegExp(`^${fromId}\\s*${escapeRegex(card.syntax)}\\s*${toId}\\s*:\\s*(.*)$`);
+      const re = new RegExp(`^${fromId}\\s*${escapeRegex(card.syntax)}\\s*${toId}\\s*:\\s*${ER_LABEL_GROUP}$`);
       const m = trimmed.match(re);
-      if (m) return { arrowId: card.id, label: m[1] || '' };
+      if (m) return { arrowId: card.id, label: m[1] ?? m[2] ?? '' };
     }
   }
   return null;
@@ -294,15 +386,19 @@ export function deleteErEdge(source, fromId, toId) {
 
 /**
  * Rewrites the ER relationship line connecting fromId -> toId in place to
- * use `arrowId`'s cardinality and `label`. ER labels can't be blank (see
- * the module-level comment) — an empty/whitespace `label` falls back to
- * DEFAULT_ER_LABEL rather than writing invalid syntax. Appends a new line
- * instead if no existing line matched.
+ * use `arrowId`'s cardinality and `label`. Always quotes the label (see
+ * quoteErLabel) — deliberately doesn't fall back to a default for an
+ * empty/cleared label the way connectNodes does for a brand-new edge: this
+ * is called on every keystroke while editing an existing label (see
+ * App.jsx's edge popover), and forcing a fallback while the field is
+ * genuinely empty (e.g. the user backspaced it to retype) would fight
+ * their typing, reappearing between keystrokes. An empty quoted label
+ * (`: ""`) is valid Mermaid syntax on its own (confirmed via the real
+ * parser). Appends a new line instead if no existing line matched.
  */
 export function setErEdge(source, fromId, toId, arrowId, label) {
   const card = ER_CARDINALITIES.find((a) => a.id === arrowId) || ER_CARDINALITIES[0];
-  const safeLabel = (label || '').trim() || DEFAULT_ER_LABEL;
-  const newLine = `${fromId} ${card.syntax} ${toId} : ${safeLabel}`;
+  const newLine = `${fromId} ${card.syntax} ${toId} : ${quoteErLabel(label)}`;
   const lines = (source || '').split('\n');
   const idx = lines.findIndex((line) => erEdgeRegex(fromId, toId).test(line));
   if (idx === -1) return [...lines, newLine].join('\n');
