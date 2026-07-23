@@ -197,6 +197,52 @@ export function parseInlineStyleAttr(styleAttr) {
 }
 
 /**
+ * Serializes an element, then repairs a specific browser-serialization
+ * quirk affecting SVG `<image>` elements: C4 diagrams' Person/System icons
+ * render as `<image href="data:...">` in Mermaid's own raw output (a plain,
+ * unprefixed SVG2 attribute — confirmed against real v11.16.0 output), but
+ * after being parsed and re-serialized once (exactly what inlineSvgStyles()
+ * and applyModernPolish() both do), some browsers' XMLSerializer emits that
+ * same attribute back out as the legacy `xlink:href` qualified name instead
+ * — without ever adding the `xmlns:xlink` declaration a *strict* XML parser
+ * requires to resolve that prefix. The break isn't visible at the point it's
+ * introduced (this function's own output still gets inserted via
+ * `dangerouslySetInnerHTML`'s HTML parsing, which tolerates a bare
+ * `xlink:href` per the HTML5 foreign-content spec regardless of any
+ * declaration), but the *next* strict `DOMParser(..., 'image/svg+xml')` call
+ * on this string — applyModernPolish()'s own round-trip, in particular —
+ * fails outright, and a real browser's DOMParser doesn't throw on that: it
+ * returns a document containing its own human-readable parse-error markup
+ * as content instead. Confirmed circumstantially via a real-browser report
+ * (a C4Context diagram rendering as a literal browser XML-parse-error page,
+ * "Namespace prefix xlink for href on image is not defined") — not
+ * reproducible under jsdom, which doesn't implement this legacy
+ * href/xlink:href reflection on SVGImageElement at all, so unlike most of
+ * this file's other DOM-dependent logic, this one specific repair couldn't
+ * be jsdom-verified before shipping; treat it as real-browser-confirmed only
+ * once actually re-checked there. Restoring the missing declaration here —
+ * right after serializing, before the string goes anywhere else — prevents
+ * the failure outright rather than only detecting it after the fact (see
+ * the hardened parsererror check below for the belt-and-suspenders fallback
+ * if some other, unrelated cause of parse failure ever slips through
+ * instead).
+ */
+// Split out from reserializeWithXlinkNamespace() below purely so this one
+// string transform — unlike the DOMParser/XMLSerializer calls throughout
+// this file — can be unit tested under plain Node (see
+// mermaid-renderer.test.js).
+export function ensureXlinkNamespaceDeclared(serialized) {
+  if (/[<\s]xlink:[\w-]+=/.test(serialized) && !/\sxmlns:xlink=/.test(serialized)) {
+    return serialized.replace(/<svg\b/, '<svg xmlns:xlink="http://www.w3.org/1999/xlink"');
+  }
+  return serialized;
+}
+
+function reserializeWithXlinkNamespace(el) {
+  return ensureXlinkNamespaceDeclared(new XMLSerializer().serializeToString(el));
+}
+
+/**
  * Bakes the CSS rules from a Mermaid SVG's embedded <style> block, and any
  * per-element inline `style="..."` attributes, into presentation attributes
  * on the matching elements, then drops both. Returns the original SVG
@@ -214,7 +260,16 @@ function inlineSvgStyles(svgString) {
   try {
     const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
     const svgEl = doc.documentElement;
-    if (!svgEl || svgEl.nodeName === 'parsererror') return svgString;
+    // Also checked via querySelector, not just the root's own nodeName:
+    // confirmed (see C4Context investigation below) that a strict-XML parse
+    // failure doesn't always leave documentElement itself named
+    // 'parsererror' — the diagnostic element can end up nested instead,
+    // which the nodeName-only check silently missed, letting a failed
+    // parse's browser-generated error markup fall through and get treated
+    // as if it were the real SVG.
+    if (!svgEl || svgEl.nodeName === 'parsererror' || doc.querySelector('parsererror')) {
+      return svgString;
+    }
 
     // Tracks which (element, attribute) pairs THIS function has itself
     // written, separate from el.hasAttribute() — Mermaid's raw SVG output
@@ -340,7 +395,7 @@ function inlineSvgStyles(svgString) {
       el.removeAttribute('style');
     });
 
-    return new XMLSerializer().serializeToString(svgEl);
+    return reserializeWithXlinkNamespace(svgEl);
   } catch {
     return svgString;
   }
@@ -383,7 +438,11 @@ function applyModernPolish(svgString, idPrefix) {
   try {
     const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
     const svgEl = doc.documentElement;
-    if (!svgEl || svgEl.nodeName === 'parsererror') return svgString;
+    // See the matching check in inlineSvgStyles() above for why
+    // querySelector, not just nodeName, is needed to catch this reliably.
+    if (!svgEl || svgEl.nodeName === 'parsererror' || doc.querySelector('parsererror')) {
+      return svgString;
+    }
     const svgNs = 'http://www.w3.org/2000/svg';
 
     const filterId = `${idPrefix}-modern-shadow`;
@@ -467,7 +526,7 @@ function applyModernPolish(svgString, idPrefix) {
         el.setAttribute('stroke-width', '2');
       });
 
-    return new XMLSerializer().serializeToString(svgEl);
+    return reserializeWithXlinkNamespace(svgEl);
   } catch {
     return svgString;
   }

@@ -6,6 +6,8 @@
  * actually downloading a file in a real browser after any change here.
  */
 
+import { ensureXlinkNamespaceDeclared } from './mermaid-renderer.js';
+
 // Matches .diagram-canvas-wrap[data-surface] in styles.css — the exported
 // file's background should match what the user actually sees on screen
 // (a diagram's surface follows its own Mermaid theme, not Jira's chrome —
@@ -60,7 +62,19 @@ export function buildExportSvgElement(liveSvgEl, natural, dark) {
 }
 
 export function serializeExportSvg(svgEl) {
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(svgEl)}`;
+  // This clone went through the same cloneNode(true) as the live element
+  // mermaid-renderer.js already parsed/re-serialized once (in
+  // inlineSvgStyles()/applyModernPolish()) — ensureXlinkNamespaceDeclared()
+  // there exists precisely because that round trip can turn an <image>'s
+  // `href` into an undeclared `xlink:href` (see its own comment for the
+  // full story). This is a second, independent XMLSerializer call on that
+  // same subtree, so it needs the identical repair — otherwise a diagram
+  // whose live *preview* happens to render fine (HTML-parsed insertion
+  // tolerates the missing declaration) could still export as an invalid
+  // standalone SVG/PNG (a strict parser, or an <img> loading this file,
+  // won't).
+  const serialized = ensureXlinkNamespaceDeclared(new XMLSerializer().serializeToString(svgEl));
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${serialized}`;
 }
 
 /**
