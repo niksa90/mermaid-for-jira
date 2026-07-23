@@ -28,7 +28,6 @@ export default function DiagramView({
   knownIds,
   onConnect,
   onEdgeClick,
-  onNodeDoubleClick,
 }) {
   const [svg, setSvg] = useState(null);
   const [error, setError] = useState(null);
@@ -102,7 +101,6 @@ export default function DiagramView({
       knownIds={knownIds}
       onConnect={onConnect}
       onEdgeClick={onEdgeClick}
-      onNodeDoubleClick={onNodeDoubleClick}
     />
   );
 }

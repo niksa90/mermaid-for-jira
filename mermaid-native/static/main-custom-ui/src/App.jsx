@@ -267,28 +267,30 @@ export default function App() {
   const [edgePopover, setEdgePopover] = useState(null);
   const edgePopoverRef = useRef(null);
   const [edgePopoverTop, setEdgePopoverTop] = useState(0);
-  // The label popover: opened by double-clicking a node/participant (any
-  // text-kind-supported diagram — see node-text.js's resolveNodeTextKind).
-  // Shape mirrors nodePopover: { diagramId, kind, nodeId, rect }. For every
-  // kind but ER, edits are live — the input's value is read straight off
-  // diagram.source each render (same "no local draft state needed, source
-  // IS the state" pattern the edge popover's label field already uses) and
-  // every keystroke updates diagram.source directly. ER can't work that
-  // way: renaming an entity's id changes the very id this popover is
-  // anchored to, so a live per-keystroke commit would rename it once per
-  // keystroke ("C", then "CL", then "CLI", ...) and, worse, the anchor
-  // guard below (parseIds not finding labelPopover.nodeId after the id
-  // changed out from under it) would silently close the popover mid-edit.
-  // ER instead buffers into erRenameDraft and only commits on blur/close
-  // (see commitErRenameDraft) — erRenameDraftRef mirrors it synchronously
-  // (same "ref alongside state" pattern as latestDiagramsRef) since the
-  // outside-click/Escape effect below only re-registers when labelPopover
-  // itself changes, not on every keystroke, so its own closure would
-  // otherwise read a stale draft.
-  const [labelPopover, setLabelPopover] = useState(null);
-  const labelPopoverRef = useRef(null);
+  // The node-style popover's label/rename field (see node-text.js's
+  // resolveNodeTextKind) — folded into nodePopover itself as its first row
+  // rather than a separate popover, per direct user feedback: a separate
+  // double-click-triggered popover collided with the style popover opening
+  // on the node's first click (the style popover rendered right over the
+  // node before the second click ever landed, so the browser never saw two
+  // clicks on the same element). One popover, opened by a single click, is
+  // simpler and avoids that class of bug entirely. For every kind but ER,
+  // this field edits a real label live — the input's value is read
+  // straight off diagram.source each render (same "no local draft state
+  // needed, source IS the state" pattern the edge popover's own label
+  // field already uses) and every keystroke updates diagram.source
+  // directly. ER can't work that way: renaming an entity's id changes the
+  // very id nodePopover is anchored to, so a live per-keystroke commit
+  // would rename it once per keystroke ("C", then "CL", then "CLI", ...)
+  // and, worse, renderNodePopover's own "does this id still exist" guard
+  // would close the popover mid-edit the moment the anchored id changed
+  // out from under it. ER instead buffers into erRenameDraft and only
+  // commits on blur/close (see commitErRenameDraft) — erRenameDraftRef
+  // mirrors it synchronously (same "ref alongside state" pattern as
+  // latestDiagramsRef) since the outside-click/Escape effect below only
+  // re-registers when nodePopover itself changes, not on every keystroke,
+  // so its own closure would otherwise read a stale draft.
   const labelInputRef = useRef(null);
-  const [labelPopoverTop, setLabelPopoverTop] = useState(0);
   const [erRenameDraft, setErRenameDraft] = useState(null);
   const erRenameDraftRef = useRef(null);
   // Whether the panel is effectively rendering in dark mode (see
@@ -433,80 +435,70 @@ export default function App() {
     setEdgePopoverTop(clampPopoverTop(edgePopover.rect, edgePopoverRef.current.getBoundingClientRect().height));
   }, [edgePopover]);
 
-  // Same clamped-into-viewport positioning, for the label popover opened by
-  // double-clicking a node/participant.
-  useLayoutEffect(() => {
-    if (!labelPopover || !labelPopoverRef.current) return;
-    setLabelPopoverTop(clampPopoverTop(labelPopover.rect, labelPopoverRef.current.getBoundingClientRect().height));
-  }, [labelPopover]);
-
-  // Autofocus + select-all on open, so "double-click then type" works
-  // without an extra click into the field first.
+  // Autofocus + select-all on open, so a click immediately starts a rename/
+  // relabel without an extra click into the field first.
   useEffect(() => {
-    if (!labelPopover || !labelInputRef.current) return;
+    if (!nodePopover || !labelInputRef.current) return;
     labelInputRef.current.focus();
     labelInputRef.current.select();
-  }, [labelPopover]);
+  }, [nodePopover]);
 
-  // Commits a buffered ER rename (see labelPopover's own comment above) —
+  // Commits a buffered ER rename (see the label-field comment above) —
   // called on blur, and on every path that closes the popover out from
   // under an in-progress edit (outside click, Escape, the popover's own
-  // close button) — CLAUDE.md's own note on the edge popover documents
-  // exactly this class of bug (an outside click closing a popover before
-  // onBlur fires, silently discarding the edit), which is why every close
-  // path here has to flush, not just blur. Reads erRenameDraftRef (not the
-  // erRenameDraft state) since this can be called from a closure — the
-  // outside-click/Escape effect below — that only re-registers when
-  // labelPopover itself changes, not on every keystroke.
+  // close button, or clicking a *different* node) — CLAUDE.md's own note
+  // on the edge popover documents exactly this class of bug (an outside
+  // click closing a popover before onBlur fires, silently discarding the
+  // edit), which is why every close path here has to flush, not just blur.
+  // Reads erRenameDraftRef (not the erRenameDraft state) since this can be
+  // called from a closure — the outside-click/Escape effect below — that
+  // only re-registers when nodePopover itself changes, not on every
+  // keystroke.
   function commitErRenameDraft() {
     const draft = erRenameDraftRef.current;
-    if (!labelPopover || draft == null) return;
-    const diagram = latestDiagramsRef.current.find((d) => d.id === labelPopover.diagramId);
+    if (!nodePopover || draft == null) return;
+    const diagram = latestDiagramsRef.current.find((d) => d.id === nodePopover.diagramId);
     if (!diagram) return;
     const textKind = resolveNodeTextKind(diagram.source);
-    if (!textKind || textKind.kind !== labelPopover.kind || !textKind.isRename) return;
-    if (draft !== labelPopover.nodeId) {
+    if (!textKind || textKind.kind !== nodePopover.kind || !textKind.isRename) return;
+    if (draft !== nodePopover.nodeId) {
       // renameERId itself validates newId and no-ops (source unchanged) for
       // an invalid or colliding rename — reusing that guard here rather
       // than duplicating the charset check in the UI layer.
-      const nextSource = textKind.setText(diagram.source, labelPopover.nodeId, draft);
+      const nextSource = textKind.setText(diagram.source, nodePopover.nodeId, draft);
       if (nextSource !== diagram.source) {
         updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
-        setLabelPopover((prev) => (prev && prev.diagramId === diagram.id ? { ...prev, nodeId: draft } : prev));
+        setNodePopover((prev) => (prev && prev.diagramId === diagram.id ? { ...prev, nodeId: draft } : prev));
       }
     }
     erRenameDraftRef.current = null;
     setErRenameDraft(null);
   }
 
-  // Closes the click-to-style/edge/label popovers on Escape or on any
-  // pointerdown outside them — including the pointerdown that starts
-  // panning the canvas underneath, since that's also outside each
-  // popover's own DOM node. Capture phase so this runs before
-  // DiagramCanvas's own pointerdown handler, and before a click on a
-  // *different* node reopens a popover there via onNodeClick.
+  // Closes the click-to-style/edge popovers on Escape or on any pointerdown
+  // outside them — including the pointerdown that starts panning the
+  // canvas underneath, since that's also outside each popover's own DOM
+  // node. Capture phase so this runs before DiagramCanvas's own pointerdown
+  // handler, and before a click on a *different* node reopens the popover
+  // there via onNodeClick — commitErRenameDraft runs first in that case
+  // too, so switching nodes mid-rename still saves the in-progress edit
+  // rather than silently discarding it.
   useEffect(() => {
-    if (!nodePopover && !edgePopover && !labelPopover) return undefined;
+    if (!nodePopover && !edgePopover) return undefined;
     function onDocPointerDown(e) {
       if (nodePopover && nodePopoverRef.current && !nodePopoverRef.current.contains(e.target)) {
+        commitErRenameDraft();
         setNodePopover(null);
       }
       if (edgePopover && edgePopoverRef.current && !edgePopoverRef.current.contains(e.target)) {
         setEdgePopover(null);
       }
-      if (labelPopover && labelPopoverRef.current && !labelPopoverRef.current.contains(e.target)) {
-        commitErRenameDraft();
-        setLabelPopover(null);
-      }
     }
     function onKeyDown(e) {
       if (e.key === 'Escape') {
+        if (nodePopover) commitErRenameDraft();
         setNodePopover(null);
         setEdgePopover(null);
-        if (labelPopover) {
-          commitErRenameDraft();
-          setLabelPopover(null);
-        }
       }
     }
     document.addEventListener('pointerdown', onDocPointerDown, true);
@@ -515,7 +507,7 @@ export default function App() {
       document.removeEventListener('pointerdown', onDocPointerDown, true);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [nodePopover, edgePopover, labelPopover]);
+  }, [nodePopover, edgePopover]);
 
   // Flush any pending debounced save if the panel closes mid-edit.
   useEffect(
@@ -741,22 +733,20 @@ export default function App() {
   // special case.
   function openEdgePopover(diagramId, edgeInfo) {
     setNodePopover(null);
-    setLabelPopover(null);
     setEdgePopover({ diagramId, ...edgeInfo });
   }
 
-  // Opens the label popover for a double-clicked node/participant (see
-  // labelPopover's own state comment above for why ER is buffered rather
-  // than live). Closes the style/edge popovers rather than letting them
-  // stack — a node double-click fires a plain click first (opening the
-  // style popover for flowchart/state/ER), so this also actively replaces
-  // that rather than leaving it open behind the label popover.
-  function openLabelPopover(diagramId, info) {
-    setNodePopover(null);
+  // Opens the node-style popover for a clicked node/participant — every
+  // connect-supported kind now has *something* to show here (a label/
+  // rename field at minimum — see node-text.js — plus color/border/icon
+  // rows for the three kinds with a style mechanism). Resets any leftover
+  // ER rename draft from whatever node was previously open, so it can't
+  // leak onto a different node.
+  function openNodePopover(diagramId, info) {
     setEdgePopover(null);
     erRenameDraftRef.current = null;
     setErRenameDraft(null);
-    setLabelPopover({ diagramId, ...info });
+    setNodePopover({ diagramId, ...info });
   }
 
   // Deletes whichever edge the edge popover is currently open on, same
@@ -858,15 +848,23 @@ export default function App() {
   const nearSizeLimit =
     saveState !== 'too-large' && sizeBytes > MAX_PROPERTY_BYTES * SIZE_WARNING_RATIO;
 
-  // The click-on-the-bubble style popover: the only entry point into
+  // The click-on-the-bubble node popover: the single entry point for both
   // per-node/state/entity styling (flowchart/state/ER — see
   // node-style-kind.js; other diagram types have no per-element style
-  // mechanism in Mermaid at all, verified against the real parser). An
-  // earlier version of this app had a second, docked dropdown+swatches
-  // toolbar for the same data; it was removed per direct user feedback
-  // once this popover shipped, rather than kept as a parallel entry point —
+  // mechanism in Mermaid at all, verified against the real parser) AND the
+  // label/rename field (node-text.js — every connect-supported kind has
+  // *something* to display: a real separate label for flowchart/state/
+  // class/sequence, or ER's own id for the rename case). An earlier
+  // version of this app had a second, docked dropdown+swatches toolbar for
+  // the style data; it was removed per direct user feedback once this
+  // popover shipped, rather than kept as a parallel entry point —
   // in-diagram click-to-style was judged to fully replace it, not
-  // supplement it.
+  // supplement it. The label field was originally its own popover
+  // triggered by double-click, but that collided with this one opening on
+  // the node's first click (this popover rendered right over the node
+  // before the double-click's second click could land, so the browser
+  // never saw two clicks on the same element) — folded in here instead,
+  // per direct user feedback, as the popover's first row.
   //
   // Positioned once from the rect DiagramCanvas captured at click time
   // (position: fixed + inline left/top — permitted by manifest.yml's
@@ -879,14 +877,55 @@ export default function App() {
     const diagram = diagrams.find((d) => d.id === nodePopover.diagramId);
     if (!diagram) return null;
     const styleKind = resolveNodeStyleKind(diagram.source);
+    const textKind = resolveNodeTextKind(diagram.source);
     // Guards against the popover outliving a source edit that changed the
     // diagram's type or removed the clicked node entirely (e.g. typed over
     // it in the editor while the popover from an earlier click was still
     // open) — silently closes rather than operating on a stale node id.
-    if (!styleKind || styleKind.kind !== nodePopover.kind) return null;
-    const nodeIds = styleKind.parseIds(diagram.source);
-    if (!nodeIds.includes(nodePopover.nodeId)) return null;
-    const current = styleKind.parseStyles(diagram.source)[nodePopover.nodeId] || {};
+    // Neither matching at all means this diagram kind has nothing to show
+    // here (kanban/pie/gantt/c4/mindmap — no style mechanism and no
+    // separate label to edit).
+    const hasStyle = styleKind && styleKind.kind === nodePopover.kind;
+    const hasText = textKind && textKind.kind === nodePopover.kind;
+    if (!hasStyle && !hasText) return null;
+    // textKind.parseIds and styleKind.parseIds are the exact same
+    // imported function for every kind that has both (flowchart/state/ER —
+    // see node-text.js), so it doesn't matter which is consulted here;
+    // textKind covers all five connect-supported kinds, styleKind only
+    // three, so preferring textKind when present covers class/sequence too.
+    const idParser = hasText ? textKind : styleKind;
+    if (!idParser.parseIds(diagram.source).includes(nodePopover.nodeId)) return null;
+    const current = hasStyle ? styleKind.parseStyles(diagram.source)[nodePopover.nodeId] || {} : {};
+
+    // The label/rename field — the popover's first row (see this
+    // function's own header comment for why it lives here now instead of
+    // a separate double-click popover). Four of the five kinds edit a
+    // real, separate label live (the input's value is read straight off
+    // diagram.source every render, same as the edge popover's own label
+    // field — no local draft state needed since source IS the state). ER
+    // is the one exception — see erRenameDraft's own state comment above
+    // for why it buffers into a draft and only commits on blur/close
+    // instead.
+    const isRename = hasText && textKind.isRename;
+    const currentLabelText = hasText ? textKind.getText(diagram.source, nodePopover.nodeId) : '';
+    const labelValue = isRename ? erRenameDraft ?? currentLabelText : currentLabelText;
+
+    function handleLabelChange(text) {
+      if (isRename) {
+        erRenameDraftRef.current = text;
+        setErRenameDraft(text);
+        return;
+      }
+      // Not `{ immediate: true }` — fires on every keystroke, same
+      // debounced-save-flushed-on-blur pattern as the edge popover's own
+      // label field.
+      updateDiagram(diagram.id, { source: textKind.setText(diagram.source, nodePopover.nodeId, text) });
+    }
+
+    function handleLabelBlur() {
+      if (isRename) commitErRenameDraft();
+      else flushSave();
+    }
 
     // Discrete pick (swatch click or border-width preset): applied and
     // saved right away, same as the theme/section pickers elsewhere in this
@@ -961,7 +1000,7 @@ export default function App() {
     // label to prepend an icon to without a bigger, diagram-type-specific
     // rewrite (see node-label.js's own note). Deferred rather than guessed
     // at; the row simply doesn't render for state/ER nodes.
-    const currentIcon = styleKind.kind === 'flowchart' ? getNodeIcon(diagram.source, nodePopover.nodeId) : '';
+    const currentIcon = hasStyle && styleKind.kind === 'flowchart' ? getNodeIcon(diagram.source, nodePopover.nodeId) : '';
 
     function applyIcon(icon) {
       updateDiagram(
@@ -985,12 +1024,32 @@ export default function App() {
             type="button"
             className="btn btn-subtle btn-icon node-style-popover-close"
             aria-label="Close style popover"
-            onClick={() => setNodePopover(null)}
+            onClick={() => {
+              commitErRenameDraft();
+              setNodePopover(null);
+            }}
           >
             ×
           </button>
         </div>
-        {styleKind.kind === 'flowchart' && (
+        {hasText && (
+          <div className="node-style-popover-row">
+            <span className="node-style-popover-label">{isRename ? 'Rename' : 'Label'}</span>
+            <input
+              ref={labelInputRef}
+              type="text"
+              className="text-input"
+              value={labelValue}
+              onChange={(e) => handleLabelChange(e.target.value)}
+              onBlur={handleLabelBlur}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+              placeholder={isRename ? 'Letters, numbers, underscore only' : 'Label text'}
+            />
+          </div>
+        )}
+        {hasStyle && styleKind.kind === 'flowchart' && (
           <div className="node-style-popover-row">
             <span className="node-style-popover-label">Icon</span>
             <div className="icon-group" role="group" aria-label="Node icon">
@@ -1009,49 +1068,53 @@ export default function App() {
             </div>
           </div>
         )}
-        {renderColorRow('Fill', 'fill', '#ffffff')}
-        {renderColorRow('Border', 'stroke', '#333333')}
-        <div className="node-style-popover-row">
-          <span className="node-style-popover-label">Border width</span>
-          <div className="border-width-group" role="group" aria-label="Border width">
-            {BORDER_WIDTHS.map((px) => (
-              <button
-                key={px}
-                type="button"
-                className={`btn btn-subtle btn-icon border-width-btn${
-                  currentStrokeWidth === String(px) ? ' border-width-btn-active' : ''
-                }`}
-                aria-label={`${px}px border`}
-                aria-pressed={currentStrokeWidth === String(px)}
-                onClick={() => applyPopoverStyleImmediate('stroke-width', String(px))}
-              >
-                <span className="border-width-preview" data-width={px} />
-              </button>
-            ))}
+        {hasStyle && renderColorRow('Fill', 'fill', '#ffffff')}
+        {hasStyle && renderColorRow('Border', 'stroke', '#333333')}
+        {hasStyle && (
+          <div className="node-style-popover-row">
+            <span className="node-style-popover-label">Border width</span>
+            <div className="border-width-group" role="group" aria-label="Border width">
+              {BORDER_WIDTHS.map((px) => (
+                <button
+                  key={px}
+                  type="button"
+                  className={`btn btn-subtle btn-icon border-width-btn${
+                    currentStrokeWidth === String(px) ? ' border-width-btn-active' : ''
+                  }`}
+                  aria-label={`${px}px border`}
+                  aria-pressed={currentStrokeWidth === String(px)}
+                  onClick={() => applyPopoverStyleImmediate('stroke-width', String(px))}
+                >
+                  <span className="border-width-preview" data-width={px} />
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        {renderColorRow('Text', 'color', '#000000')}
-        <button
-          type="button"
-          className="btn btn-subtle node-style-popover-reset"
-          onClick={() => {
-            let nextSource = styleKind.upsertStyle(diagram.source, nodePopover.nodeId, {
-              fill: '',
-              stroke: '',
-              'stroke-width': '',
-              color: '',
-            });
-            if (styleKind.kind === 'flowchart') {
-              nextSource = setNodeIcon(nextSource, nodePopover.nodeId, '');
-            }
-            updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
-          }}
-        >
-          <span className="node-style-popover-reset-icon" aria-hidden="true">
-            ↺
-          </span>
-          Reset node
-        </button>
+        )}
+        {hasStyle && renderColorRow('Text', 'color', '#000000')}
+        {hasStyle && (
+          <button
+            type="button"
+            className="btn btn-subtle node-style-popover-reset"
+            onClick={() => {
+              let nextSource = styleKind.upsertStyle(diagram.source, nodePopover.nodeId, {
+                fill: '',
+                stroke: '',
+                'stroke-width': '',
+                color: '',
+              });
+              if (styleKind.kind === 'flowchart') {
+                nextSource = setNodeIcon(nextSource, nodePopover.nodeId, '');
+              }
+              updateDiagram(diagram.id, { source: nextSource }, { immediate: true });
+            }}
+          >
+            <span className="node-style-popover-reset-icon" aria-hidden="true">
+              ↺
+            </span>
+            Reset node
+          </button>
+        )}
       </div>
     );
   }
@@ -1195,85 +1258,6 @@ export default function App() {
           </span>
           Delete arrow
         </button>
-      </div>
-    );
-  }
-
-  // The label popover: opened by double-clicking a node/participant (any
-  // text-kind-supported diagram — see node-text.js's resolveNodeTextKind).
-  // Four of the five kinds edit a real, separate label live (the input's
-  // value is read straight off diagram.source every render, same as the
-  // edge popover's own label field — no local draft state needed since
-  // source IS the state, and every keystroke updates it directly). ER is
-  // the one exception — see labelPopover's state comment and
-  // commitErRenameDraft above for why it buffers instead.
-  function renderLabelPopover() {
-    if (!labelPopover) return null;
-    const diagram = diagrams.find((d) => d.id === labelPopover.diagramId);
-    if (!diagram) return null;
-    const textKind = resolveNodeTextKind(diagram.source);
-    // Same "outlived a source edit" guard as the other two popovers —
-    // closes silently rather than editing a stale/renamed-out-from-under-it
-    // node.
-    if (!textKind || textKind.kind !== labelPopover.kind) return null;
-    if (!textKind.parseIds(diagram.source).includes(labelPopover.nodeId)) return null;
-
-    const isRename = textKind.isRename;
-    const currentText = textKind.getText(diagram.source, labelPopover.nodeId);
-    const value = isRename ? erRenameDraft ?? currentText : currentText;
-
-    function handleChange(text) {
-      if (isRename) {
-        erRenameDraftRef.current = text;
-        setErRenameDraft(text);
-        return;
-      }
-      // Not `{ immediate: true }` — fires on every keystroke, same debounced-
-      // save-flushed-on-blur pattern as the edge popover's own label field.
-      updateDiagram(diagram.id, { source: textKind.setText(diagram.source, labelPopover.nodeId, text) });
-    }
-
-    function handleBlur() {
-      if (isRename) commitErRenameDraft();
-      else flushSave();
-    }
-
-    const { rect } = labelPopover;
-    const style = {
-      left: Math.max(8, rect.left + rect.width / 2),
-      top: labelPopoverTop,
-    };
-
-    return (
-      <div className="node-style-popover" ref={labelPopoverRef} style={style}>
-        <div className="node-style-popover-header">
-          <span className="node-style-popover-title">{isRename ? 'Rename' : 'Label'}</span>
-          <button
-            type="button"
-            className="btn btn-subtle btn-icon node-style-popover-close"
-            aria-label="Close label popover"
-            onClick={() => {
-              if (isRename) commitErRenameDraft();
-              setLabelPopover(null);
-            }}
-          >
-            ×
-          </button>
-        </div>
-        <div className="node-style-popover-row">
-          <input
-            ref={labelInputRef}
-            type="text"
-            className="text-input"
-            value={value}
-            onChange={(e) => handleChange(e.target.value)}
-            onBlur={handleBlur}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur();
-            }}
-            placeholder={isRename ? 'Letters, numbers, underscore only' : 'Label text'}
-          />
-        </div>
       </div>
     );
   }
@@ -1479,7 +1463,7 @@ export default function App() {
                     source={diagram.source}
                     theme={diagram.theme}
                     idPrefix={diagram.id}
-                    onNodeClick={(info) => setNodePopover({ diagramId: diagram.id, ...info })}
+                    onNodeClick={(info) => openNodePopover(diagram.id, info)}
                     selectedNode={
                       nodePopover && nodePopover.diagramId === diagram.id
                         ? { kind: nodePopover.kind, nodeId: nodePopover.nodeId }
@@ -1506,7 +1490,6 @@ export default function App() {
                       )
                     }
                     onEdgeClick={(edgeInfo) => openEdgePopover(diagram.id, edgeInfo)}
-                    onNodeDoubleClick={(info) => openLabelPopover(diagram.id, info)}
                   />
                 </DiagramErrorBoundary>
               </div>
@@ -1646,7 +1629,6 @@ export default function App() {
       </div>
       {renderNodePopover()}
       {renderEdgePopover()}
-      {renderLabelPopover()}
     </div>
   );
 }
