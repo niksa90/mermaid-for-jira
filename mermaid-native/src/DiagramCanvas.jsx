@@ -26,12 +26,73 @@ const HOVER_CLEAR_GRACE_MS = 350;
 // Each diagram kind renders edges under its own CSS class (confirmed via
 // jsdom scratch render) — used both to widen click hit areas and to
 // dispatch edge-click detection to the right id-extraction function below.
+// Sequence messages carry no plain `id` attribute at all (see
+// diagram-connect.js's header comment) — `data-et="message"` is what both
+// selects them and marks that a match is a message, not (say) a
+// control-structure wrapper. The widened-hit-area clone below copies this
+// attribute along with everything else, so the selector also matches its
+// own clones; extractSequenceMessageOrdinal (below) accounts for that.
 const EDGE_SELECTORS = {
   flowchart: '.flowchart-link[id]',
   state: '.transition[id]',
   class: '.relation[id]',
   er: '.relationshipLine[id]',
+  sequence: '[data-et="message"]',
 };
+
+// Sequence's own node-equivalent: a participant/actor's TOP box (see
+// diagram-connect.js's header comment for why only the top one qualifies).
+const SEQUENCE_PARTICIPANT_SELECTOR = '[data-et="participant"][data-id]';
+
+/**
+ * Resolves a pointer target to `{ kind, nodeId, target }` for whichever
+ * diagram type `connectKind` describes, or `null`. Every kind but sequence
+ * shares one scheme (a `.node[id]` group whose DOM id encodes both a marker
+ * and the source id — see extractClickedNodeId); sequence doesn't fit that
+ * scheme at all — its participant boxes already carry the source id as a
+ * plain `data-id` attribute, so there's nothing to string-parse, just a
+ * direct read. `connectKind` may be null (a diagram type with no connect
+ * support at all) or missing `kind` entirely — both fall through to the
+ * generic `.node[id]` branch, matching this function's pre-sequence
+ * behavior of just trying that selector unconditionally.
+ */
+function resolveNodeTarget(el, connectKind) {
+  if (!el?.closest) return null;
+  if (connectKind?.kind === 'sequence') {
+    const target = el.closest(SEQUENCE_PARTICIPANT_SELECTOR);
+    const nodeId = target?.getAttribute('data-id');
+    return nodeId ? { kind: 'sequence', nodeId, target } : null;
+  }
+  const target = el.closest('.node[id]');
+  if (!target) return null;
+  const resolved = extractClickedNodeId(target.getAttribute('id'));
+  return resolved ? { kind: resolved.kind, nodeId: resolved.nodeId, target } : null;
+}
+
+/**
+ * Resolves a clicked sequence message element (original or its own
+ * widened-hit-area clone — see the widening effect below) to its 0-based
+ * ordinal among message lines, matching diagram-connect.js's
+ * parseSequenceMessages ordering. Can't use DOM position directly
+ * (`Array.from(...).indexOf(edgeTarget)`) — the widening effect's clone
+ * carries every attribute the original has, including `data-id`, so each
+ * message is really two elements back to back in document order; this
+ * dedupes by `data-id` first; then locates edgeTarget's own `data-id`
+ * within that deduped, order-preserved list.
+ */
+function extractSequenceMessageOrdinal(container, edgeTarget, selector) {
+  const seenIds = [];
+  const seen = new Set();
+  container.querySelectorAll(selector).forEach((el) => {
+    const dataId = el.getAttribute('data-id');
+    if (dataId && !seen.has(dataId)) {
+      seen.add(dataId);
+      seenIds.push(dataId);
+    }
+  });
+  const ordinal = seenIds.indexOf(edgeTarget.getAttribute('data-id'));
+  return ordinal === -1 ? null : ordinal;
+}
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -311,14 +372,13 @@ export default function DiagramCanvas({
       if (pendingConnectFrom) {
         setPendingPointer({ x: e.clientX, y: e.clientY });
       }
-      const target = e.target?.closest?.('.node[id]');
-      const resolved = target && extractClickedNodeId(target.getAttribute('id'));
-      if (resolved) {
+      const hit = resolveNodeTarget(e.target, connectKind);
+      if (hit) {
         if (hoverClearTimeoutRef.current) {
           clearTimeout(hoverClearTimeoutRef.current);
           hoverClearTimeoutRef.current = null;
         }
-        setHoveredNode({ nodeId: resolved.nodeId, rect: target.getBoundingClientRect() });
+        setHoveredNode({ nodeId: hit.nodeId, rect: hit.target.getBoundingClientRect() });
       } else if (!hoverClearTimeoutRef.current) {
         // Not over a node right now — but don't clear immediately. A
         // shape's rendered outline can sit well inside its bounding box
@@ -387,10 +447,7 @@ export default function DiagramCanvas({
 
     function resolveNodeAt(x, y) {
       const el = document.elementFromPoint(x, y);
-      const target = el?.closest?.('.node[id]');
-      if (!target) return null;
-      const resolved = extractClickedNodeId(target.getAttribute('id'));
-      return resolved ? { resolved, target } : null;
+      return resolveNodeTarget(el, connectKind);
     }
 
     function onMove(moveEvent) {
@@ -406,7 +463,7 @@ export default function DiagramCanvas({
       // document-level events, so the drop-target highlight is kept in
       // sync here instead, using the same hoveredNode state it reads from.
       const hit = resolveNodeAt(moveEvent.clientX, moveEvent.clientY);
-      setHoveredNode(hit ? { nodeId: hit.resolved.nodeId, rect: hit.target.getBoundingClientRect() } : null);
+      setHoveredNode(hit ? { nodeId: hit.nodeId, rect: hit.target.getBoundingClientRect() } : null);
     }
 
     function onUp(upEvent) {
@@ -415,8 +472,8 @@ export default function DiagramCanvas({
       setActiveConnectDrag(null);
       if (moved) {
         const hit = resolveNodeAt(upEvent.clientX, upEvent.clientY);
-        if (hit && hit.resolved.nodeId !== fromNodeId) {
-          onConnect?.(fromNodeId, hit.resolved.nodeId);
+        if (hit && hit.nodeId !== fromNodeId) {
+          onConnect?.(fromNodeId, hit.nodeId);
         }
       } else {
         // A plain click on the handle, not a drag — enter click-click mode:
@@ -473,28 +530,27 @@ export default function DiagramCanvas({
     // still clears the pending state; it just doesn't call onConnect for a
     // no-op self-connection.
     if (pendingConnectFrom) {
-      const target = downTarget?.closest?.('.node[id]');
-      const resolved = target && extractClickedNodeId(target.getAttribute('id'));
-      if (resolved && resolved.nodeId !== pendingConnectFrom.nodeId) {
-        onConnect?.(pendingConnectFrom.nodeId, resolved.nodeId);
+      const hit = resolveNodeTarget(downTarget, connectKind);
+      if (hit && hit.nodeId !== pendingConnectFrom.nodeId) {
+        onConnect?.(pendingConnectFrom.nodeId, hit.nodeId);
       }
       setPendingConnectFrom(null);
       setPendingPointer(null);
       return;
     }
     if (!downTarget?.closest) return;
-    const target = downTarget.closest('.node[id]');
-    if (target) {
-      const resolved = extractClickedNodeId(target.getAttribute('id'));
-      if (resolved && onNodeClick) onNodeClick({ ...resolved, rect: target.getBoundingClientRect() });
+    const hit = resolveNodeTarget(downTarget, connectKind);
+    if (hit) {
+      if (onNodeClick) onNodeClick({ kind: hit.kind, nodeId: hit.nodeId, rect: hit.target.getBoundingClientRect() });
       return;
     }
 
-    // Not a node — check whether it's an edge/relationship/transition
-    // instead (opens the edge popover). Each diagram kind renders edges
-    // under a different CSS class and DOM id scheme (confirmed via jsdom
-    // scratch render), so both the selector and the id-extraction function
-    // are picked per connectKind.kind rather than one shared attempt.
+    // Not a node — check whether it's an edge/relationship/transition/
+    // message instead (opens the edge popover). Each diagram kind renders
+    // edges under a different CSS class/attribute and DOM id scheme
+    // (confirmed via jsdom scratch render), so both the selector and the
+    // id-extraction function are picked per connectKind.kind rather than
+    // one shared attempt.
     if (connectKind && onEdgeClick) {
       const selector = EDGE_SELECTORS[connectKind.kind];
       const edgeTarget = selector && downTarget.closest(selector);
@@ -509,6 +565,12 @@ export default function DiagramCanvas({
           resolvedEdge = extractClickedClassEdgeId(edgeTarget.getAttribute('id'), knownIds);
         } else if (connectKind.kind === 'er') {
           resolvedEdge = extractClickedErEdgeId(edgeTarget.getAttribute('id'));
+        } else if (connectKind.kind === 'sequence') {
+          const ordinal = extractSequenceMessageOrdinal(containerRef.current, edgeTarget, selector);
+          resolvedEdge =
+            ordinal != null
+              ? { fromId: edgeTarget.getAttribute('data-from'), toId: edgeTarget.getAttribute('data-to'), ordinal }
+              : null;
         }
       }
       if (resolvedEdge && edgeTarget) {

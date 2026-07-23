@@ -42,6 +42,9 @@ import {
   readErEdge,
   deleteErEdge,
   setErEdge,
+  readSequenceMessageAtIndex,
+  deleteSequenceMessageAtIndex,
+  setSequenceMessageAtIndex,
 } from '../../../src/diagram-connect';
 import { getNodeIcon, setNodeIcon, QUICK_ICONS } from '../../../src/node-label';
 // Regular weight only — this loads Inter for the Mermaid diagram canvas
@@ -681,6 +684,8 @@ export default function App() {
       nextSource = deleteClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
     } else if (edgePopover.kind === 'er') {
       nextSource = deleteErEdge(diagram.source, edgePopover.fromId, edgePopover.toId);
+    } else if (edgePopover.kind === 'sequence') {
+      nextSource = deleteSequenceMessageAtIndex(diagram.source, edgePopover.ordinal);
     }
     setEdgePopover(null);
     // A no-op delete (source unchanged — the edge line wasn't in a shape
@@ -1005,9 +1010,22 @@ export default function App() {
       if (!info) return null;
       arrowId = info.arrowId;
       label = info.label;
+    } else if (connectKind.kind === 'sequence') {
+      const info = readSequenceMessageAtIndex(diagram.source, edgePopover.ordinal);
+      if (!info) return null; // message no longer at this ordinal (source hand-edited)
+      arrowId = info.arrowId;
+      label = info.label;
     }
 
     function applyArrow(nextArrowId) {
+      if (connectKind.kind === 'sequence') {
+        updateDiagram(
+          diagram.id,
+          { source: setSequenceMessageAtIndex(diagram.source, edgePopover.ordinal, nextArrowId, label) },
+          { immediate: true }
+        );
+        return;
+      }
       const setEdge = connectKind.kind === 'class' ? setClassEdge : setErEdge;
       updateDiagram(
         diagram.id,
@@ -1028,6 +1046,8 @@ export default function App() {
         nextSource = setStateEdgeLabelAtIndex(diagram.source, edgePopover.edgeIndex, nextLabel);
       } else if (connectKind.kind === 'class') {
         nextSource = setClassEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, nextLabel);
+      } else if (connectKind.kind === 'sequence') {
+        nextSource = setSequenceMessageAtIndex(diagram.source, edgePopover.ordinal, arrowId, nextLabel);
       } else {
         nextSource = setErEdge(diagram.source, edgePopover.fromId, edgePopover.toId, arrowId, nextLabel);
       }
