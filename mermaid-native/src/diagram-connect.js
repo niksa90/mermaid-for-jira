@@ -1,18 +1,48 @@
 // Pure logic for the click/drag-to-connect gesture (DiagramCanvas.jsx) and
 // the edge popover it opens (App.jsx): turns "the user dragged (or
 // click-clicked) from node A's handle to node B" into an appended Mermaid
-// edge/relationship/transition line, and reads/rewrites/deletes an existing
-// one by its two endpoints.
+// edge/relationship/transition/message line, and reads/rewrites/deletes an
+// existing one by its two endpoints (or, for sequence, by ordinal — see
+// below).
 //
-// Covers flowchart, state, class, and ER. Sequence diagrams are
-// deliberately NOT covered here — confirmed via a jsdom scratch render that
-// classic `participant` declarations render with no `id` at all (just a
-// `name` attribute), unlike every other diagram type's clean
-// `<marker>-<sourceId>-<counter>` id scheme (see svg-node-id.js), and
-// "connecting" two participants means appending an ordered *message*, not
-// an unordered edge — different enough on both ends (click-detection *and*
-// what "connect" produces) that it needs its own pass rather than forcing
-// it through this module's shape.
+// Covers flowchart, state, class, ER, and sequence. Sequence needed its own
+// pass rather than reusing this file's endpoint-based shape wholesale —
+// confirmed via a jsdom scratch render (mermaid@11.16.0) that its DOM scheme
+// is genuinely different from the other four, not just a variant of it:
+// - Every participant/actor's own TOP box carries `data-et="participant"` +
+//   `data-id="<sourceId>"` directly (an alias, e.g. `participant A as
+//   Alice Cooper`, still renders `data-id="A"` — the short id, matching
+//   what a message line actually references). No `<marker>-<sourceId>-
+//   <counter>` id-string to parse (see svg-node-id.js) — DiagramCanvas.jsx
+//   reads the attribute straight off the element for sequence rather than
+//   going through extractClickedNodeId. The BOTTOM mirror box (rendered a
+//   second time at the diagram's end) carries no such attributes at all,
+//   which is why the connect gesture's hover/click target is the top box
+//   specifically, not "either occurrence of this participant."
+// - Each message renders as `data-et="message"` `data-from="<id>"`
+//   `data-to="<id>"` directly on the element — no id-parsing needed at all
+//   (better than every other diagram type's scheme, which all require
+//   extracting endpoints from a synthesized id string). A self-message
+//   (`A->>A: ...`) renders as an SVG `<path>` instead of a `<line>` — same
+//   attributes, different tag, so any code touching these elements can't
+//   assume a specific tag name.
+// - "Connecting" two participants means appending an ordered *message*, not
+//   an unordered edge/relationship. Deletion/restyle-by-endpoints doesn't
+//   work for messages the way it does for flowchart/class/ER, because two
+//   messages can share the exact same (from, to) pair (e.g. a request and
+//   its reply going the other way, or two same-direction messages in a
+//   loop) — messages are identified by ordinal position among message
+//   lines instead (see parseSequenceMessages), the same "position, not
+//   endpoints" approach state-diagram transitions already use for their own
+//   different reason (no endpoint info in their DOM id at all). Confirmed
+//   via jsdom that a message's DOM order (and its own internal
+//   `data-id="i<N>"` counter, which also numbers loop/alt/opt/par
+//   boundaries and so isn't a dense 0..count-1 sequence) both increase
+//   strictly in source order even across loop/alt/opt/par nesting — so a
+//   plain "Nth message-shaped line in the source, top to bottom, ignoring
+//   any control-structure keyword lines" ordinal lines up with "Nth
+//   `[data-et="message"]` element in the DOM," without needing to replicate
+//   Mermaid's own internal counter.
 //
 // Confirmed against the real mermaid@11.16.0 parser (jsdom scratch spike,
 // same convention as every other diagram-syntax decision in this app):
@@ -57,6 +87,38 @@ export const ER_CARDINALITIES = [
   { id: 'zero-or-one-to-zero-or-one', label: 'Zero/one to zero/one', syntax: '|o--o|' },
 ];
 
+// Sequence message arrow variants offered by the connect gesture's edge
+// popover: every combination of solid/dotted line and none/arrow/cross/async
+// arrowhead Mermaid's sequence grammar supports — confirmed via a jsdom
+// scratch render that all 8 parse and render distinctly (matching Mermaid's
+// own docs' naming for these, not just something inferred from the syntax).
+// Ordered longest-syntax-first for buildSequenceArrowPattern below, same
+// "more specific alternative must get first crack" rule as CLASS_ARROWS —
+// `-->>`  is a strict superset-in-prefix of `->>`/`-->`, so a shorter
+// alternative earlier in the pattern could otherwise win first and leave a
+// dangling character the rest of the regex fails to match.
+export const SEQUENCE_ARROWS = [
+  { id: 'solid', label: 'Solid', syntax: '->' },
+  { id: 'solid-arrow', label: 'Solid, arrow', syntax: '->>' },
+  { id: 'solid-cross', label: 'Solid, cross', syntax: '-x' },
+  { id: 'solid-async', label: 'Solid, async', syntax: '-)' },
+  { id: 'dotted', label: 'Dotted', syntax: '-->' },
+  { id: 'dotted-arrow', label: 'Dotted, arrow', syntax: '-->>' },
+  { id: 'dotted-cross', label: 'Dotted, cross', syntax: '--x' },
+  { id: 'dotted-async', label: 'Dotted, async', syntax: '--)' },
+];
+
+function sequenceArrowPattern() {
+  return [...SEQUENCE_ARROWS]
+    .sort((a, b) => b.syntax.length - a.syntax.length)
+    .map((a) => escapeRegex(a.syntax))
+    .join('|');
+}
+
+function sequenceMessageRegex() {
+  return new RegExp(`^(\\s*)([A-Za-z_]\\w*)\\s*(${sequenceArrowPattern()})\\s*([A-Za-z_]\\w*)\\s*:\\s*(.*)$`);
+}
+
 const DEFAULT_ER_LABEL = 'relates to';
 
 // ER labels containing a space fail to parse unless quoted — confirmed via
@@ -80,6 +142,8 @@ export function resolveConnectKind(source) {
   if (kind === 'state') return { kind, arrowOptions: null, needsLabel: false, defaultArrowId: null };
   if (kind === 'class') return { kind, arrowOptions: CLASS_ARROWS, needsLabel: false, defaultArrowId: 'association' };
   if (kind === 'er') return { kind, arrowOptions: ER_CARDINALITIES, needsLabel: true, defaultArrowId: 'one-to-many' };
+  if (kind === 'sequence')
+    return { kind, arrowOptions: SEQUENCE_ARROWS, needsLabel: false, defaultArrowId: 'solid-arrow' };
   return null;
 }
 
@@ -155,6 +219,17 @@ export function connectNodes(source, fromId, toId, opts = {}) {
     const arrow =
       ER_CARDINALITIES.find((a) => a.id === (opts.arrowId || connectKind.defaultArrowId)) || ER_CARDINALITIES[0];
     line = `${fromId} ${arrow.syntax} ${toId} : ${quoteErLabel(opts.label || DEFAULT_ER_LABEL)}`;
+  } else if (connectKind.kind === 'sequence') {
+    // Always appended at the end, never inserted mid-diagram or into an
+    // existing loop/alt/opt/par block — "a new message happens last" is the
+    // one unambiguous place to put it without guessing which block (if any)
+    // the user meant. Auto-declares both participants if either is new
+    // (confirmed against the real parser — no explicit participant/actor
+    // line is required), same as diagram-palette.js's own message-inserting
+    // entries.
+    const arrow =
+      SEQUENCE_ARROWS.find((a) => a.id === (opts.arrowId || connectKind.defaultArrowId)) || SEQUENCE_ARROWS[0];
+    line = `${fromId}${arrow.syntax}${toId}: ${opts.label || 'message'}`;
   } else {
     line = `${fromId} --> ${toId}`;
   }
@@ -403,5 +478,67 @@ export function setErEdge(source, fromId, toId, arrowId, label) {
   const idx = lines.findIndex((line) => erEdgeRegex(fromId, toId).test(line));
   if (idx === -1) return [...lines, newLine].join('\n');
   lines[idx] = newLine;
+  return lines.join('\n');
+}
+
+/**
+ * Every message-shaped line in `source`, top to bottom, regardless of
+ * indentation or loop/alt/opt/par nesting — a `loop`/`alt`/`else`/`opt`/
+ * `par`/`and`/`end`/`Note ...` line never matches this regex, so those are
+ * transparently skipped rather than needing to be explicitly excluded.
+ * `lineIndex` (this array's own position — NOT Mermaid's internal `i<N>`
+ * counter, which also numbers control-structure boundaries and so isn't
+ * dense) is what the DOM's ordinal position among `[data-et="message"]`
+ * elements lines up with (see this file's header comment) — every other
+ * function below identifies a message by this ordinal, not by endpoints,
+ * since two messages can share the same (from, to) pair.
+ */
+export function parseSequenceMessages(source) {
+  const re = sequenceMessageRegex();
+  const lines = (source || '').split('\n');
+  const messages = [];
+  lines.forEach((line, sourceLineIndex) => {
+    const m = line.match(re);
+    if (!m) return;
+    messages.push({ fromId: m[2], arrowSyntax: m[3], toId: m[4], label: m[5], sourceLineIndex });
+  });
+  return messages;
+}
+
+/** Returns `{ fromId, toId, label, arrowId }` for the Nth message line (0-based, source order), or `null` if out of range. */
+export function readSequenceMessageAtIndex(source, ordinal) {
+  if (ordinal == null || ordinal < 0) return null;
+  const msg = parseSequenceMessages(source)[ordinal];
+  if (!msg) return null;
+  const arrow = SEQUENCE_ARROWS.find((a) => a.syntax === msg.arrowSyntax);
+  return { fromId: msg.fromId, toId: msg.toId, label: msg.label, arrowId: arrow ? arrow.id : SEQUENCE_ARROWS[0].id };
+}
+
+/**
+ * Rewrites the Nth message line (0-based) in place, setting its arrow
+ * variant and label. Preserves the line's own leading indentation (messages
+ * inside a loop/alt/opt/par block are indented in every template/palette
+ * entry this app generates) and endpoints — only the arrow syntax and label
+ * change. No-op if `ordinal` is out of range.
+ */
+export function setSequenceMessageAtIndex(source, ordinal, arrowId, label) {
+  const messages = parseSequenceMessages(source);
+  const msg = messages[ordinal];
+  if (!msg) return source || '';
+  const arrow = SEQUENCE_ARROWS.find((a) => a.id === arrowId) || SEQUENCE_ARROWS.find((a) => a.syntax === msg.arrowSyntax) || SEQUENCE_ARROWS[0];
+  const lines = (source || '').split('\n');
+  const original = lines[msg.sourceLineIndex];
+  const indent = original.match(/^(\s*)/)[1];
+  lines[msg.sourceLineIndex] = `${indent}${msg.fromId}${arrow.syntax}${msg.toId}: ${label}`;
+  return lines.join('\n');
+}
+
+/** Removes the Nth message line (0-based, source order) from `source`. No-op if `ordinal` is out of range. */
+export function deleteSequenceMessageAtIndex(source, ordinal) {
+  const messages = parseSequenceMessages(source);
+  const msg = messages[ordinal];
+  if (!msg) return source || '';
+  const lines = (source || '').split('\n');
+  lines.splice(msg.sourceLineIndex, 1);
   return lines.join('\n');
 }

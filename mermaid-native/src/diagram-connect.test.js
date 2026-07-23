@@ -17,6 +17,10 @@ import {
   readErEdge,
   deleteErEdge,
   setErEdge,
+  parseSequenceMessages,
+  readSequenceMessageAtIndex,
+  setSequenceMessageAtIndex,
+  deleteSequenceMessageAtIndex,
 } from './diagram-connect.js';
 
 test('isConnectable recognizes flowchart and graph, ignoring a leading %%init directive', () => {
@@ -25,11 +29,11 @@ test('isConnectable recognizes flowchart and graph, ignoring a leading %%init di
   assert.equal(isConnectable('%%{init: {"theme": "dark"}}%%\nflowchart TD\n  A --> B'), true);
 });
 
-test('isConnectable is now also true for state, class, and ER (sequence remains unsupported)', () => {
+test('isConnectable is true for flowchart, state, class, ER, and sequence', () => {
   assert.equal(isConnectable('stateDiagram-v2\n  [*] --> A'), true);
   assert.equal(isConnectable('classDiagram\n  class A'), true);
   assert.equal(isConnectable('erDiagram\n  A ||--o{ B : has'), true);
-  assert.equal(isConnectable('sequenceDiagram\n  A->>B: hi'), false);
+  assert.equal(isConnectable('sequenceDiagram\n  A->>B: hi'), true);
   assert.equal(isConnectable(''), false);
 });
 
@@ -79,7 +83,7 @@ test('connectNodes always includes a quoted label for ER (mandatory in Mermaid s
 test('connectNodes is a no-op for a self-connection, missing ids, or an unsupported diagram type', () => {
   assert.equal(connectNodes('flowchart TD\n  A[Start]', 'A', 'A'), 'flowchart TD\n  A[Start]');
   assert.equal(connectNodes('flowchart TD\n  A[Start]', '', 'A'), 'flowchart TD\n  A[Start]');
-  assert.equal(connectNodes('sequenceDiagram\n  participant A', 'A', 'B'), 'sequenceDiagram\n  participant A');
+  assert.equal(connectNodes('pie\n  "A" : 10', 'A', 'B'), 'pie\n  "A" : 10');
 });
 
 test('deleteFlowchartEdge removes a bare edge line entirely', () => {
@@ -193,4 +197,76 @@ test('readStateEdgeAtIndex / setStateEdgeLabelAtIndex round-trip a state transit
 
 test('readStateEdgeAtIndex returns null for an out-of-range index', () => {
   assert.equal(readStateEdgeAtIndex('stateDiagram-v2\n  A --> B', 5), null);
+});
+
+test('resolveConnectKind reports the 8 sequence arrow variants and a solid-arrow default, no required label', () => {
+  const kind = resolveConnectKind('sequenceDiagram\n  A->>B: hi');
+  assert.equal(kind.arrowOptions.length, 8);
+  assert.equal(kind.defaultArrowId, 'solid-arrow');
+  assert.equal(kind.needsLabel, false);
+});
+
+test('connectNodes appends a solid-arrow message with a placeholder label for sequence diagrams', () => {
+  const source = 'sequenceDiagram\n  participant A\n  participant B';
+  assert.equal(
+    connectNodes(source, 'A', 'B'),
+    'sequenceDiagram\n  participant A\n  participant B\nA->>B: message'
+  );
+});
+
+test('parseSequenceMessages finds message lines top to bottom, ignoring participant/loop/alt/end keyword lines but including messages nested inside them', () => {
+  const source = [
+    'sequenceDiagram',
+    '  participant A',
+    '  participant B',
+    '  A->>B: one',
+    '  loop Every message',
+    '    B-->>A: two',
+    '  end',
+    '  alt condition',
+    '    A-)B: three',
+    '  else',
+    '    A-xB: four',
+    '  end',
+  ].join('\n');
+  const messages = parseSequenceMessages(source);
+  assert.deepEqual(
+    messages.map((m) => ({ fromId: m.fromId, toId: m.toId, arrowSyntax: m.arrowSyntax, label: m.label })),
+    [
+      { fromId: 'A', toId: 'B', arrowSyntax: '->>', label: 'one' },
+      { fromId: 'B', toId: 'A', arrowSyntax: '-->>', label: 'two' },
+      { fromId: 'A', toId: 'B', arrowSyntax: '-)', label: 'three' },
+      { fromId: 'A', toId: 'B', arrowSyntax: '-x', label: 'four' },
+    ]
+  );
+});
+
+test('readSequenceMessageAtIndex / setSequenceMessageAtIndex / deleteSequenceMessageAtIndex round-trip a message positionally, disambiguating duplicate (from, to) pairs', () => {
+  const source = 'sequenceDiagram\n  A->>B: one\n  A->>B: two\n  B-->>A: reply';
+  assert.deepEqual(readSequenceMessageAtIndex(source, 0), { fromId: 'A', toId: 'B', label: 'one', arrowId: 'solid-arrow' });
+  assert.deepEqual(readSequenceMessageAtIndex(source, 1), { fromId: 'A', toId: 'B', label: 'two', arrowId: 'solid-arrow' });
+
+  const relabeled = setSequenceMessageAtIndex(source, 1, 'solid-arrow', 'two (edited)');
+  assert.equal(relabeled, 'sequenceDiagram\n  A->>B: one\n  A->>B: two (edited)\n  B-->>A: reply');
+  // Index 0's identical (from, to) pair is untouched by editing index 1.
+  assert.deepEqual(readSequenceMessageAtIndex(relabeled, 0), { fromId: 'A', toId: 'B', label: 'one', arrowId: 'solid-arrow' });
+
+  const restyled = setSequenceMessageAtIndex(source, 2, 'dotted-cross', 'reply (edited)');
+  assert.equal(restyled, 'sequenceDiagram\n  A->>B: one\n  A->>B: two\n  B--xA: reply (edited)');
+
+  assert.equal(deleteSequenceMessageAtIndex(source, 1), 'sequenceDiagram\n  A->>B: one\n  B-->>A: reply');
+});
+
+test('setSequenceMessageAtIndex preserves the message line\'s own leading indentation (e.g. inside a loop/alt block)', () => {
+  const source = 'sequenceDiagram\n  loop Every message\n    A->>B: check\n  end';
+  assert.equal(
+    setSequenceMessageAtIndex(source, 0, 'solid-arrow', 'check again'),
+    'sequenceDiagram\n  loop Every message\n    A->>B: check again\n  end'
+  );
+});
+
+test('readSequenceMessageAtIndex / deleteSequenceMessageAtIndex are no-ops/null for an out-of-range ordinal', () => {
+  const source = 'sequenceDiagram\n  A->>B: hi';
+  assert.equal(readSequenceMessageAtIndex(source, 5), null);
+  assert.equal(deleteSequenceMessageAtIndex(source, 5), source);
 });

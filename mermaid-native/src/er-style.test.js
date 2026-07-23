@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isERDiagramSource, parseERIds, parseERStyles, upsertERStyle } from './er-style.js';
+import { isERDiagramSource, parseERIds, parseERStyles, upsertERStyle, renameERId } from './er-style.js';
 
 test('isERDiagramSource recognizes erDiagram', () => {
   assert.equal(isERDiagramSource('erDiagram\n  A ||--o{ B : has'), true);
@@ -93,3 +93,52 @@ test('upsertERStyle supports the stroke-width (border width) channel', () => {
 // only a dependency of the inner static/main-custom-ui package, not this
 // outer one `npm test` runs from, so it can't be cross-imported here,
 // matching state-style.test.js's own note on this.
+
+// renameERId: the double-click-to-edit-text gesture's ER backend (a rename,
+// not a label edit — see this function's own header comment for why).
+test('renameERId renames both the entity block header and every relationship endpoint referencing it', () => {
+  const source = [
+    'erDiagram',
+    '  CUSTOMER {',
+    '    string name',
+    '  }',
+    '  CUSTOMER ||--o{ ORDER : places',
+    '  ORDER ||--|{ ITEM : contains',
+  ].join('\n');
+  assert.equal(
+    renameERId(source, 'CUSTOMER', 'CLIENT'),
+    [
+      'erDiagram',
+      '  CLIENT {',
+      '    string name',
+      '  }',
+      '  CLIENT ||--o{ ORDER : places',
+      '  ORDER ||--|{ ITEM : contains',
+    ].join('\n')
+  );
+});
+
+test('renameERId renames an entity known only via a relationship endpoint, with no block declaration', () => {
+  const source = 'erDiagram\n  A ||--o{ B : has';
+  assert.equal(renameERId(source, 'B', 'WIDGET'), 'erDiagram\n  A ||--o{ WIDGET : has');
+});
+
+test('renameERId leaves a relationship label untouched even when it contains the old id as a substring', () => {
+  const source = 'erDiagram\n  A ||--o{ B : "A special note"';
+  assert.equal(renameERId(source, 'A', 'CUSTOMER'), 'erDiagram\n  CUSTOMER ||--o{ B : "A special note"');
+});
+
+test('renameERId is a no-op if oldId does not exist, newId is falsy, or newId already belongs to a different entity', () => {
+  const source = 'erDiagram\n  A ||--o{ B : has';
+  assert.equal(renameERId(source, 'C', 'D'), source);
+  assert.equal(renameERId(source, 'A', ''), source);
+  assert.equal(renameERId(source, 'A', 'B'), source);
+  assert.equal(renameERId(source, 'A', 'A'), source);
+});
+
+test('renameERId rejects a newId containing anything other than letters/digits/underscore, avoiding a corrupted rename', () => {
+  const source = 'erDiagram\n  A ||--o{ B : has';
+  assert.equal(renameERId(source, 'A', 'Customer Orders'), source);
+  assert.equal(renameERId(source, 'A', 'A-B'), source);
+  assert.equal(renameERId(source, 'A', 'Order!'), source);
+});

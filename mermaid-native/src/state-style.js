@@ -197,3 +197,75 @@ export function upsertStateStyle(source, stateId, patch) {
 
   return lines.join('\n');
 }
+
+function stateAliasRegex(stateId) {
+  return new RegExp(`^(\\s*)state\\s+"([^"]*)"\\s+as\\s+${stateId}\\s*$`);
+}
+
+function stateDescRegex(stateId) {
+  return new RegExp(`^(\\s*)${stateId}\\s*:\\s*(.*)$`);
+}
+
+/**
+ * The state's current displayed text (its `state "desc" as Id` alias, or a
+ * separate `Id : desc` line), or '' if it has neither — meaning it only
+ * ever displays its own bare id. If a diagram hand-writes both forms for
+ * the same id (unusual, but not invalid), the alias form wins, matching
+ * setStateLabelText's own priority below.
+ */
+export function getStateLabelText(source, stateId) {
+  const lines = (source || '').split('\n');
+  const aliasRe = stateAliasRegex(stateId);
+  const descRe = stateDescRegex(stateId);
+  for (const line of lines) {
+    const aliasM = line.match(aliasRe);
+    if (aliasM) return aliasM[2];
+  }
+  for (const line of lines) {
+    const descM = line.match(descRe);
+    if (descM) return descM[2];
+  }
+  return '';
+}
+
+/**
+ * Sets the state's displayed text, for the double-click-to-edit gesture.
+ * Rewrites an existing alias or `: desc` line in place (preferring the
+ * alias form, same priority as getStateLabelText); synthesizes a new
+ * `Id : text` line if neither exists yet. Clearing an existing alias
+ * removes the whole line rather than writing `state "" as Id` — confirmed
+ * via the real parser that an empty quoted alias is a parse error (unlike
+ * ER's empty quoted relationship label, which is valid) — leaving the
+ * state to fall back to displaying its own bare id, same as a state that
+ * never had a label at all.
+ */
+export function setStateLabelText(source, stateId, text) {
+  const lines = (source || '').split('\n');
+  const aliasRe = stateAliasRegex(stateId);
+  const aliasIdx = lines.findIndex((line) => aliasRe.test(line));
+  if (aliasIdx !== -1) {
+    if (!text) {
+      lines.splice(aliasIdx, 1);
+      return lines.join('\n');
+    }
+    const [, indent] = lines[aliasIdx].match(aliasRe);
+    lines[aliasIdx] = `${indent}state "${text}" as ${stateId}`;
+    return lines.join('\n');
+  }
+
+  const descRe = stateDescRegex(stateId);
+  const descIdx = lines.findIndex((line) => descRe.test(line));
+  if (descIdx !== -1) {
+    if (!text) {
+      lines.splice(descIdx, 1);
+      return lines.join('\n');
+    }
+    const [, indent] = lines[descIdx].match(descRe);
+    lines[descIdx] = `${indent}${stateId} : ${text}`;
+    return lines.join('\n');
+  }
+
+  if (!text) return source || '';
+  const trimmedEnd = lines.length && lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
+  return [...trimmedEnd, `${stateId} : ${text}`].join('\n');
+}
