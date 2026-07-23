@@ -27,6 +27,17 @@ function appendLines(source, newLines) {
   return [...trimmed, ...newLines].join('\n');
 }
 
+// A completely empty diagram (a freshly-cleared editor, not the "Add a
+// diagram" flow, which already seeds a blank flowchart template) has no
+// diagram-type keyword for detectDiagramKind to find, so every entry's
+// insert() has to supply one itself rather than appending a shape/element
+// line with no header above it — real Mermaid syntax, not a fragment. Only
+// kicks in when the source is genuinely blank; an existing diagram of this
+// same type is left completely untouched.
+function ensureHeader(source, header) {
+  return (source || '').trim() ? source : header;
+}
+
 /**
  * First unused id from A, B, C, ... Z, then A2, B2, ... — deliberately the
  * same short single-letter convention this app's own flowchart/sequence/ER
@@ -82,8 +93,9 @@ function flowchartEntries() {
     label,
     glyph,
     insert(source) {
-      const nodeId = nextAvailableId(parseFlowchartNodeIds(source));
-      return appendLines(source, [`${nodeId}@{ shape: ${shape}, label: "${label}" }`]);
+      const base = ensureHeader(source, 'flowchart TD');
+      const nodeId = nextAvailableId(parseFlowchartNodeIds(base));
+      return appendLines(base, [`${nodeId}@{ shape: ${shape}, label: "${label}" }`]);
     },
   }));
 
@@ -96,8 +108,9 @@ function flowchartEntries() {
       label: 'Lane',
       glyph: 'lane',
       insert(source) {
-        const laneId = nextAvailableId(parseFlowchartNodeIds(source));
-        return appendLines(source, [`subgraph ${laneId}[Lane]`, `end`]);
+        const base = ensureHeader(source, 'flowchart TD');
+        const laneId = nextAvailableId(parseFlowchartNodeIds(base));
+        return appendLines(base, [`subgraph ${laneId}[Lane]`, `end`]);
       },
     },
   ];
@@ -124,21 +137,28 @@ function sequenceEntries() {
       id: 'participant',
       label: 'Participant',
       glyph: 'participant',
-      insert: (source) => appendLines(source, [`participant ${nextAvailableId(parseSequenceIds(source))}`]),
+      insert(source) {
+        const base = ensureHeader(source, 'sequenceDiagram');
+        return appendLines(base, [`participant ${nextAvailableId(parseSequenceIds(base))}`]);
+      },
     },
     {
       id: 'actor',
       label: 'Actor',
       glyph: 'actor',
-      insert: (source) => appendLines(source, [`actor ${nextAvailableId(parseSequenceIds(source))}`]),
+      insert(source) {
+        const base = ensureHeader(source, 'sequenceDiagram');
+        return appendLines(base, [`actor ${nextAvailableId(parseSequenceIds(base))}`]);
+      },
     },
     {
       id: 'loop',
       label: 'Loop',
       glyph: '↻',
       insert(source) {
-        const [a, b] = sequenceEndpoints(source);
-        return appendLines(source, [`loop Every message`, `    ${a}->>${b}: message`, `end`]);
+        const base = ensureHeader(source, 'sequenceDiagram');
+        const [a, b] = sequenceEndpoints(base);
+        return appendLines(base, [`loop Every message`, `    ${a}->>${b}: message`, `end`]);
       },
     },
     {
@@ -146,8 +166,9 @@ function sequenceEntries() {
       label: 'Alt/Else',
       glyph: '⑂',
       insert(source) {
-        const [a, b] = sequenceEndpoints(source);
-        return appendLines(source, [
+        const base = ensureHeader(source, 'sequenceDiagram');
+        const [a, b] = sequenceEndpoints(base);
+        return appendLines(base, [
           `alt condition`,
           `    ${a}->>${b}: message`,
           `else`,
@@ -161,8 +182,9 @@ function sequenceEntries() {
       label: 'Opt',
       glyph: '?',
       insert(source) {
-        const [a, b] = sequenceEndpoints(source);
-        return appendLines(source, [`opt condition`, `    ${a}->>${b}: message`, `end`]);
+        const base = ensureHeader(source, 'sequenceDiagram');
+        const [a, b] = sequenceEndpoints(base);
+        return appendLines(base, [`opt condition`, `    ${a}->>${b}: message`, `end`]);
       },
     },
     {
@@ -170,8 +192,9 @@ function sequenceEntries() {
       label: 'Par',
       glyph: '∥',
       insert(source) {
-        const [a, b] = sequenceEndpoints(source);
-        return appendLines(source, [
+        const base = ensureHeader(source, 'sequenceDiagram');
+        const [a, b] = sequenceEndpoints(base);
+        return appendLines(base, [
           `par action one`,
           `    ${a}->>${b}: one`,
           `and action two`,
@@ -185,8 +208,9 @@ function sequenceEntries() {
       label: 'Note',
       glyph: '✎',
       insert(source) {
-        const [a, b] = sequenceEndpoints(source);
-        return appendLines(source, [`Note over ${a},${b}: a note`]);
+        const base = ensureHeader(source, 'sequenceDiagram');
+        const [a, b] = sequenceEndpoints(base);
+        return appendLines(base, [`Note over ${a},${b}: a note`]);
       },
     },
   ];
@@ -203,9 +227,18 @@ const PALETTE_BUILDERS = {
  * node-style-kind.js's resolveNodeStyleKind dispatch shape, including its
  * "return null = nothing to offer" convention (callers should render
  * nothing, not an empty palette).
+ *
+ * A blank source (an emptied-out editor — "Add a diagram" already seeds a
+ * real flowchart template, so this is specifically the "user deleted
+ * everything" case) has no diagram-type keyword for detectDiagramKind to
+ * find, which used to mean the palette row disappeared at exactly the
+ * moment it would have been most useful — a real bug report, not a
+ * hypothetical. Defaulting to 'flowchart' here (each entry's insert()
+ * itself supplies the `flowchart TD` header via ensureHeader above) lets
+ * the palette double as a way to start a diagram from nothing.
  */
 export function resolvePaletteKind(source) {
-  const kind = detectDiagramKind(source);
+  const kind = (source || '').trim() ? detectDiagramKind(source) : 'flowchart';
   const builder = PALETTE_BUILDERS[kind];
   if (!builder) return null;
   return { kind, entries: builder() };

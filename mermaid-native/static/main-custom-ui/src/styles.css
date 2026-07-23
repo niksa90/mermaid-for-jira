@@ -690,6 +690,23 @@ body {
   cursor: grabbing;
 }
 
+/* Hints that a node is clickable (opens the style popover — see
+   DiagramCanvas.jsx's handleNodeClick, which resolves a click against this
+   exact `.node[id]` selector) rather than just more pannable canvas. Only
+   applies to diagram types with a per-node style mechanism at all
+   (flowchart/state/ER — see node-style-kind.js): other diagram types'
+   nodes don't carry Mermaid's own `.node` class, so this selector simply
+   doesn't match anything there and the pan cursor is unaffected. Overridden
+   back to grabbing while actively panning so a drag that happens to pass
+   over a node doesn't flicker the cursor mid-gesture. */
+.diagram-canvas .node[id] {
+  cursor: pointer;
+}
+
+.diagram-canvas-panning .node[id] {
+  cursor: grabbing;
+}
+
 /* Fullscreen: guaranteed baseline is this fixed overlay covering the whole
    Custom UI panel (position:fixed escapes .preview-pane's overflow:hidden
    and .board-container's own scroll box — none of their ancestors set
@@ -886,6 +903,17 @@ body {
 
 /* --- Inputs --- */
 
+/* Same "flat bordered box -> soft fill, no hard border" language as the
+   node-style popover's Reset node button above — per direct user feedback
+   that these still read as plain, dated form fields next to the rest of
+   this app's now-mostly-borderless chrome. A visible border only comes
+   back on focus (as a ring, via box-shadow — not border-color, which would
+   need a non-transparent border to show through and this deliberately
+   keeps border-width reserved rather than adding one only on :focus, which
+   would shift layout by the border's width). Rest-state legibility comes
+   from the background fill contrasting against the surrounding white card
+   body, not a border — same substitution already applied to
+   .codemirror-editor and the diagram card. */
 .text-input,
 .select-input {
   appearance: none;
@@ -893,24 +921,24 @@ body {
   font: inherit;
   font-size: 13px;
   color: var(--color-text);
-  border: 1px solid var(--color-input-border);
-  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   height: 32px;
-  padding: 0 8px;
+  padding: 0 10px;
   box-sizing: border-box;
-  background: var(--color-input-bg);
-  transition: border-color 0.1s ease, box-shadow 0.1s ease;
+  background: var(--color-subtle-bg);
+  transition: background-color 0.1s ease, box-shadow 0.1s ease;
 }
 
 .text-input:hover,
 .select-input:hover {
-  border-color: var(--color-text-subtle);
+  background: var(--color-subtle-bg-hover);
 }
 
 .text-input:focus,
 .select-input:focus {
   outline: none;
-  border-color: var(--color-border-focus);
+  background: var(--color-input-bg);
   box-shadow: 0 0 0 2px rgba(56, 139, 255, 0.35);
 }
 

@@ -33,6 +33,16 @@ test('parseFlowchartNodeIds handles edge labels', () => {
   assert.deepEqual(parseFlowchartNodeIds(source), ['A', 'B', 'C']);
 });
 
+// Regression test: this used to be missed entirely, which meant
+// diagram-palette.js's nextAvailableId() thought no palette-inserted shape
+// ids were taken and kept computing the same "next free" id on every
+// click — every inserted shape silently overwrote the previous one instead
+// of adding a new node (see the real bug report this was filed from).
+test('parseFlowchartNodeIds recognizes Mermaid v11 unified @{shape:...} node declarations', () => {
+  const source = 'flowchart TD\n  A[Start] --> B{Decision}\n  E@{ shape: rect, label: "Process" }';
+  assert.deepEqual(parseFlowchartNodeIds(source), ['A', 'B', 'E']);
+});
+
 test('parseFlowchartNodeIds excludes reserved keywords like the diagram type and direction', () => {
   const source = 'flowchart TD\n  A[Start] --> B[End]';
   const ids = parseFlowchartNodeIds(source);

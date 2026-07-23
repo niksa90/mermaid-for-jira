@@ -79,3 +79,26 @@ test('QUICK_ICONS is a small curated, non-empty set', () => {
   assert.ok(QUICK_ICONS.length > 0);
   assert.ok(QUICK_ICONS.length < 20);
 });
+
+// Regression tests: a node declared via Mermaid v11's unified
+// `@{ shape: ..., label: "..." }` syntax (diagram-palette.js) used to be
+// invisible to findLabelLine (which only recognizes bracket pairs), so
+// setNodeIcon fell through to its "synthesize a new NodeId[icon] line"
+// fallback — adding a *second*, conflicting declaration for the same id
+// that silently won and discarded the original shape and label entirely.
+test('getNodeIcon reads the label out of an @{shape:...} declaration', () => {
+  const source = 'flowchart TD\n  A@{ shape: rect, label: "🚀 Deploy" }';
+  assert.equal(getNodeIcon(source, 'A'), '🚀');
+});
+
+test('setNodeIcon rewrites the label inside @{shape:...} in place, preserving the shape', () => {
+  const source = 'flowchart TD\n  A[Start] --> B{Decision}\n  E@{ shape: rect, label: "Process" }';
+  const next = setNodeIcon(source, 'E', '🚀');
+  assert.equal(next, 'flowchart TD\n  A[Start] --> B{Decision}\n  E@{ shape: rect, label: "🚀 Process" }');
+});
+
+test('setNodeIcon clears an icon from an @{shape:...} label without disturbing the shape', () => {
+  const source = 'flowchart TD\n  E@{ shape: rect, label: "🚀 Process" }';
+  const next = setNodeIcon(source, 'E', '');
+  assert.equal(next, 'flowchart TD\n  E@{ shape: rect, label: "Process" }');
+});

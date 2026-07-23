@@ -42,19 +42,26 @@ export function isFlowchartSource(source) {
 
 /**
  * Best-effort extraction of node ids from flowchart source: identifiers
- * declared with a shape (`A[Start]`, `A(Round)`, `A{Diamond}`, ...) plus
- * identifiers that only ever appear as an edge endpoint (`A --> B`, with or
- * without an edge label). Regex-based, not a real Mermaid parser, so it can
- * miss unusual syntax (e.g. a subgraph's own `subgraph id[Title]` label) —
- * that just means the picker won't offer that node, not that anything
- * breaks.
+ * declared with a shape (`A[Start]`, `A(Round)`, `A{Diamond}`, Mermaid v11's
+ * unified `A@{ shape: rect, label: "..." }` syntax, ...) plus identifiers
+ * that only ever appear as an edge endpoint (`A --> B`, with or without an
+ * edge label). Regex-based, not a real Mermaid parser, so it can miss
+ * unusual syntax (e.g. a subgraph's own `subgraph id[Title]` label) — that
+ * just means the picker won't offer that node, not that anything breaks.
+ *
+ * The `@{...}` branch matters beyond just recognizing those nodes as
+ * style-able: diagram-palette.js's nextAvailableId() also reads this
+ * function's output to avoid id collisions between palette-inserted
+ * shapes. Missing it here used to mean every palette click computed the
+ * same "next free id" — silently overwriting the previous click's node
+ * with the same id instead of adding a new one.
  */
 export function parseFlowchartNodeIds(source) {
   const text = source || '';
   const ids = new Set();
 
   text.split('\n').forEach((line) => {
-    const m = line.match(/^\s*([A-Za-z_]\w*)\s*[[({>]/);
+    const m = line.match(/^\s*([A-Za-z_]\w*)\s*(?:[[({>]|@\{)/);
     if (m) ids.add(m[1]);
   });
 

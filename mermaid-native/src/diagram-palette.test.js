@@ -18,7 +18,17 @@ test('resolvePaletteKind returns null for diagram types with no palette yet', ()
   assert.equal(resolvePaletteKind('pie title x\n  "A" : 1'), null);
   assert.equal(resolvePaletteKind('gantt\n  title x'), null);
   assert.equal(resolvePaletteKind('classDiagram\n  class Animal'), null);
-  assert.equal(resolvePaletteKind(''), null);
+});
+
+// A blank source has no diagram-type keyword for detectDiagramKind to find
+// at all — defaulting to 'flowchart' here (rather than null) is deliberate:
+// the palette used to just disappear the moment a diagram was emptied out,
+// which is exactly when it would have been most useful. Each entry's
+// insert() supplies the missing `flowchart TD` header itself (see
+// ensureHeader), so this doubles as a way to start a diagram from nothing.
+test('resolvePaletteKind defaults to flowchart for a blank/whitespace-only source', () => {
+  assert.equal(resolvePaletteKind('').kind, 'flowchart');
+  assert.equal(resolvePaletteKind('   \n  ').kind, 'flowchart');
 });
 
 test('resolvePaletteKind recognizes flowchart and offers a Lane entry alongside node shapes', () => {
@@ -27,6 +37,13 @@ test('resolvePaletteKind recognizes flowchart and offers a Lane entry alongside 
   assert.ok(palette.entries.length > 5);
   assert.ok(palette.entries.some((e) => e.id === 'process'));
   assert.ok(palette.entries.some((e) => e.id === 'lane'));
+});
+
+test('a flowchart entry inserted into a blank diagram seeds the flowchart TD header itself', () => {
+  const palette = resolvePaletteKind('');
+  const process = palette.entries.find((e) => e.id === 'process');
+  assert.equal(process.insert(''), 'flowchart TD\nA@{ shape: rect, label: "Process" }');
+  assert.equal(process.insert('   \n '), 'flowchart TD\nA@{ shape: rect, label: "Process" }');
 });
 
 test('flowchart shape entries append a v11 unified-shape node with a fresh id', () => {
@@ -56,6 +73,16 @@ test('resolvePaletteKind recognizes sequence diagrams', () => {
   assert.ok(palette.entries.some((e) => e.id === 'participant'));
   assert.ok(palette.entries.some((e) => e.id === 'actor'));
   assert.ok(palette.entries.some((e) => e.id === 'loop'));
+});
+
+test('a sequence entry seeds the sequenceDiagram header itself if ever invoked against a blank source', () => {
+  // resolvePaletteKind('') always defaults to 'flowchart' (the most common
+  // type), so a real click can't reach this exact combination — but
+  // insert() is a plain function of whatever source it's given, so this
+  // covers the same ensureHeader defensiveness the flowchart entries have.
+  const palette = resolvePaletteKind('sequenceDiagram\n  participant A\n  A->>A: noop');
+  const participant = palette.entries.find((e) => e.id === 'participant');
+  assert.equal(participant.insert(''), 'sequenceDiagram\nparticipant A');
 });
 
 test('sequence Participant/Actor entries append a fresh id, not colliding with existing ones', () => {

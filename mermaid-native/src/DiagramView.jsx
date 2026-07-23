@@ -23,11 +23,24 @@ export default function DiagramView({
   const [svg, setSvg] = useState(null);
   const [error, setError] = useState(null);
   const idRef = useRef(safeDiagramId(idPrefix, index));
+  // A blank/whitespace-only source is a normal, common state (right after
+  // "Add a diagram" template picker defaults to blank, or after clearing
+  // everything out of the editor) — not a syntax mistake, so it shouldn't
+  // render as a parse-error warning. mermaid-renderer.js's renderMermaid()
+  // still throws 'Diagram is empty.' for it (used by the resolver/size
+  // checks elsewhere), but this component special-cases it before ever
+  // calling that, both to skip the pointless render attempt and to show a
+  // materially different, non-alarming message.
+  const isEmpty = !(source || '').trim();
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     onError?.(null);
+    if (isEmpty) {
+      setSvg(null);
+      return undefined;
+    }
     renderMermaid(idRef.current, withTheme(source, theme))
       .then((result) => {
         if (!cancelled) setSvg(result);
@@ -43,7 +56,15 @@ export default function DiagramView({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, theme]);
+  }, [source, theme, isEmpty]);
+
+  if (isEmpty) {
+    return (
+      <SectionMessage appearance="information" title="This diagram is empty">
+        <p>Add Mermaid syntax to see it rendered here — the shape palette above the editor can insert some for you.</p>
+      </SectionMessage>
+    );
+  }
 
   if (error) {
     return (
