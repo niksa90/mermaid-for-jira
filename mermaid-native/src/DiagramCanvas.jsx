@@ -22,6 +22,20 @@ const CLICK_MOVE_THRESHOLD = 6;
 // leaves a node — see onPointerMove's hover-tracking for why this can't be
 // instant.
 const HOVER_CLEAR_GRACE_MS = 350;
+// How long a plain click on a node waits before actually opening the style
+// popover (onNodeClick), giving a following double-click a chance to cancel
+// it first — see handleNodeClick's pendingNodeClickRef comment for why this
+// can't be instant either: opening the popover immediately on the first
+// click of a double-click means it renders (position: fixed, right over the
+// clicked node) before the second click ever lands, so that second click
+// hits the popover instead of the node — the browser never sees two clicks
+// on the same element and never fires a native `dblclick` at all. A real,
+// reported "I can't double-click on text because the styling popup gets in
+// the way" bug, not a hypothetical. Comfortably under typical
+// double-click-speed timing (a deliberate double-click's second click
+// almost always lands well inside this window) while still reading as
+// near-instant for a genuine single click.
+const NODE_CLICK_OPEN_DELAY_MS = 300;
 
 // Each diagram kind renders edges under its own CSS class (confirmed via
 // jsdom scratch render) — used both to widen click hit areas and to
@@ -189,10 +203,13 @@ export default function DiagramCanvas({
   const [pendingPointer, setPendingPointer] = useState(null);
   // See onPointerMove's HOVER_CLEAR_GRACE_MS usage.
   const hoverClearTimeoutRef = useRef(null);
+  // See NODE_CLICK_OPEN_DELAY_MS above / handleNodeClick below.
+  const pendingNodeClickTimeoutRef = useRef(null);
 
   useEffect(
     () => () => {
       if (hoverClearTimeoutRef.current) clearTimeout(hoverClearTimeoutRef.current);
+      if (pendingNodeClickTimeoutRef.current) clearTimeout(pendingNodeClickTimeoutRef.current);
     },
     []
   );
@@ -359,8 +376,16 @@ export default function DiagramCanvas({
   // Double-click resets zoom (the pre-existing behavior) *unless* it landed
   // on a node/participant, in which case it opens the label popover
   // instead — checked first so the two gestures don't collide on the same
-  // container-level event.
+  // container-level event. Cancels any still-pending single-click style
+  // popover open (see handleNodeClick's NODE_CLICK_OPEN_DELAY_MS) first —
+  // by the time this fires, that popover must never have actually rendered,
+  // or its second click would already have hit the popover instead of
+  // reaching here at all.
   function onContainerDoubleClick(e) {
+    if (pendingNodeClickTimeoutRef.current) {
+      clearTimeout(pendingNodeClickTimeoutRef.current);
+      pendingNodeClickTimeoutRef.current = null;
+    }
     const hit = resolveNodeTarget(e.target, connectKind);
     if (hit && onNodeDoubleClick) {
       onNodeDoubleClick({ kind: hit.kind, nodeId: hit.nodeId, rect: hit.target.getBoundingClientRect() });
@@ -591,7 +616,27 @@ export default function DiagramCanvas({
     if (!downTarget?.closest) return;
     const hit = resolveNodeTarget(downTarget, connectKind);
     if (hit) {
-      if (onNodeClick) onNodeClick({ kind: hit.kind, nodeId: hit.nodeId, rect: hit.target.getBoundingClientRect() });
+      if (onNodeClick) {
+        const info = { kind: hit.kind, nodeId: hit.nodeId, rect: hit.target.getBoundingClientRect() };
+        if (pendingNodeClickTimeoutRef.current) clearTimeout(pendingNodeClickTimeoutRef.current);
+        if (onNodeDoubleClick) {
+          // Delayed, not immediate: opening the style popover right away
+          // means it renders (fixed-position, right over the clicked node)
+          // before a following double-click's second click ever lands —
+          // that second click then hits the popover instead of the node,
+          // so the browser never sees two clicks on the same element and
+          // never fires `dblclick` at all. See onContainerDoubleClick,
+          // which cancels this timeout the instant it detects a real
+          // double-click, so a deliberate double-click never shows the
+          // style popover at all — not even a flash.
+          pendingNodeClickTimeoutRef.current = setTimeout(() => {
+            pendingNodeClickTimeoutRef.current = null;
+            onNodeClick(info);
+          }, NODE_CLICK_OPEN_DELAY_MS);
+        } else {
+          onNodeClick(info);
+        }
+      }
       return;
     }
 
