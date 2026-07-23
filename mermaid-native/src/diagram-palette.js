@@ -12,12 +12,31 @@
 // scratch spike before being added here — same "verify against the real
 // parser, not docs/memory" convention as every other diagram-syntax
 // decision in this app (see mermaid-renderer.js/node-style.js's own
-// history). Flowchart entries specifically use Mermaid v11's unified node
-// syntax (`Id@{ shape: name, label: "..." }`) rather than the legacy
-// per-shape bracket pairs (`[...]`, `([...])`, `(((...)))`, ...) — both
-// still parse, but the legacy forms have shape-specific bracket nesting
-// that's easy to generate wrong programmatically, where the unified form
-// is one uniform template for every shape.
+// history).
+//
+// Flowchart entries use the legacy per-shape bracket pairs (`[...]`,
+// `((...))`, `[[...]]`, ...), not Mermaid v11's newer unified
+// `Id@{ shape: name, label: "..." }` syntax — a deliberate reversal from
+// this file's first version, which used the unified form specifically to
+// avoid shape-specific bracket nesting. That tradeoff turned out to be the
+// wrong one in practice: every diagram-templates.js preset (and any
+// diagram a user already has) is written in the legacy bracket style, so a
+// palette-inserted shape sitting right next to hand-written/template nodes
+// in the same source looked like two unrelated syntaxes glued together —
+// a real, reported readability complaint, and also the less
+// beginner-friendly of the two for "people who aren't Mermaid experts"
+// (the audience this feature is for) since it doesn't match what any
+// Mermaid tutorial/docs page shows. Both forms parse fine either way
+// (confirmed above); this file just no longer needs to lean on that
+// distinction now that every entry has a plain bracket-pair equivalent
+// (parseFlowchartNodeIds still recognizes `@{...}` too, for any diagram
+// that already has one from before this reversal, or a user who typed one
+// by hand).
+//
+// "Document" (the wavy-bottom shape) was dropped from the shape set for
+// exactly this reason — verified against the real parser that it has *no*
+// legacy bracket equivalent at all, only `@{shape: doc}` — and replaced
+// with "Manual Operation" (a trapezoid, `[/...\]`), which does.
 import { detectDiagramKind } from './diagram-kind.js';
 import { parseFlowchartNodeIds } from './node-style.js';
 
@@ -70,32 +89,33 @@ function parseSequenceIds(source) {
   return ids;
 }
 
-// A curated subset of Mermaid v11's ~30 unified shape names (confirmed via
-// the shape registry in node_modules/mermaid/dist/chunks/mermaid.core/
-// chunk-*.mjs) — matching the "curated set, not everything Mermaid
-// supports" convention already used for QUICK_SWATCHES/QUICK_ICONS.
-// "Start/End" deliberately uses `circle`, matching the user's own mockup
-// literally, rather than the more textbook stadium/rounded terminal shape.
+// A curated subset of Mermaid's classic per-shape bracket pairs — matching
+// the "curated set, not everything Mermaid supports" convention already
+// used for QUICK_SWATCHES/QUICK_ICONS. "Start/End" deliberately uses the
+// circle shape, matching the user's own mockup literally, rather than the
+// more textbook stadium/rounded terminal shape. `open`/`close` are literal
+// source text, not Mermaid v11's unified shape names — see the file-level
+// comment above for why.
 const FLOWCHART_SHAPES = [
-  { id: 'process', label: 'Process', glyph: '□', shape: 'rect' },
-  { id: 'decision', label: 'Decision', glyph: '◇', shape: 'diamond' },
-  { id: 'start-end', label: 'Start/End', glyph: '○', shape: 'circle' },
-  { id: 'database', label: 'Database', glyph: 'database', shape: 'cyl' },
-  { id: 'subroutine', label: 'Subroutine', glyph: 'subroutine', shape: 'subroutine' },
-  { id: 'input-output', label: 'Input/Output', glyph: '▱', shape: 'lean-r' },
-  { id: 'document', label: 'Document', glyph: 'document', shape: 'doc' },
-  { id: 'hexagon', label: 'Preparation', glyph: '⬡', shape: 'hexagon' },
+  { id: 'process', label: 'Process', glyph: '□', open: '[', close: ']' },
+  { id: 'decision', label: 'Decision', glyph: '◇', open: '{', close: '}' },
+  { id: 'start-end', label: 'Start/End', glyph: '○', open: '((', close: '))' },
+  { id: 'database', label: 'Database', glyph: 'database', open: '[(', close: ')]' },
+  { id: 'subroutine', label: 'Subroutine', glyph: 'subroutine', open: '[[', close: ']]' },
+  { id: 'input-output', label: 'Input/Output', glyph: '▱', open: '[/', close: '/]' },
+  { id: 'manual-operation', label: 'Manual Operation', glyph: 'trapezoid', open: '[/', close: '\\]' },
+  { id: 'hexagon', label: 'Preparation', glyph: '⬡', open: '{{', close: '}}' },
 ];
 
 function flowchartEntries() {
-  const shapeEntries = FLOWCHART_SHAPES.map(({ id, label, glyph, shape }) => ({
+  const shapeEntries = FLOWCHART_SHAPES.map(({ id, label, glyph, open, close }) => ({
     id,
     label,
     glyph,
     insert(source) {
       const base = ensureHeader(source, 'flowchart TD');
       const nodeId = nextAvailableId(parseFlowchartNodeIds(base));
-      return appendLines(base, [`${nodeId}@{ shape: ${shape}, label: "${label}" }`]);
+      return appendLines(base, [`${nodeId}${open}${label}${close}`]);
     },
   }));
 

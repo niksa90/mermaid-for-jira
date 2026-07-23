@@ -72,8 +72,8 @@ export const DatabaseShapeIcon = makeIcon(
 export const SubroutineShapeIcon = makeIcon(
   '<g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="10" rx="1"/><line x1="7" y1="7" x2="7" y2="17"/><line x1="17" y1="7" x2="17" y2="17"/></g>'
 );
-export const DocumentShapeIcon = makeIcon(
-  '<path fill="none" stroke="currentColor" stroke-width="1.5" d="M4 5h16v11c-2 0-2 2-4 2s-2-2-4-2-2 2-4 2-2-2-4-2z"/>'
+export const TrapezoidShapeIcon = makeIcon(
+  '<polygon fill="none" stroke="currentColor" stroke-width="1.5" points="6,17 18,17 15,7 9,7"/>'
 );
 export const LaneShapeIcon = makeIcon(
   '<g fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="1"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="15" y1="4" x2="15" y2="20"/></g>'

@@ -42,22 +42,41 @@ test('resolvePaletteKind recognizes flowchart and offers a Lane entry alongside 
 test('a flowchart entry inserted into a blank diagram seeds the flowchart TD header itself', () => {
   const palette = resolvePaletteKind('');
   const process = palette.entries.find((e) => e.id === 'process');
-  assert.equal(process.insert(''), 'flowchart TD\nA@{ shape: rect, label: "Process" }');
-  assert.equal(process.insert('   \n '), 'flowchart TD\nA@{ shape: rect, label: "Process" }');
+  assert.equal(process.insert(''), 'flowchart TD\nA[Process]');
+  assert.equal(process.insert('   \n '), 'flowchart TD\nA[Process]');
 });
 
-test('flowchart shape entries append a v11 unified-shape node with a fresh id', () => {
+// Legacy bracket pairs, not Mermaid v11's unified @{shape:...} syntax — see
+// the file-level comment in diagram-palette.js for why this reversed an
+// earlier version's choice (readability/consistency with hand-written and
+// template source, both of which use bracket pairs everywhere).
+test('flowchart shape entries append a classic bracket-shape node with a fresh id', () => {
   const palette = resolvePaletteKind('flowchart TD\n  A --> B');
   const process = palette.entries.find((e) => e.id === 'process');
   const next = process.insert('flowchart TD\n  A --> B');
-  assert.equal(next, 'flowchart TD\n  A --> B\nC@{ shape: rect, label: "Process" }');
+  assert.equal(next, 'flowchart TD\n  A --> B\nC[Process]');
 });
 
 test('flowchart shape entries pick an id that does not collide with existing nodes', () => {
   const palette = resolvePaletteKind('flowchart TD\n  A --> B\n  B --> C');
   const decision = palette.entries.find((e) => e.id === 'decision');
   const next = decision.insert('flowchart TD\n  A --> B\n  B --> C');
-  assert.equal(next, 'flowchart TD\n  A --> B\n  B --> C\nD@{ shape: diamond, label: "Decision" }');
+  assert.equal(next, 'flowchart TD\n  A --> B\n  B --> C\nD{Decision}');
+});
+
+test('flowchart shape entries still avoid colliding with an @{shape:...} node from before this file switched off that syntax', () => {
+  const source = 'flowchart TD\n  A --> B\n  C@{ shape: rect, label: "Process" }';
+  const palette = resolvePaletteKind(source);
+  const decision = palette.entries.find((e) => e.id === 'decision');
+  const next = decision.insert(source);
+  assert.equal(next, `${source}\nD{Decision}`);
+});
+
+test('the Manual Operation (trapezoid) entry uses an asymmetric bracket pair, not a symmetric one', () => {
+  const palette = resolvePaletteKind('flowchart TD\n  A --> B');
+  const trapezoid = palette.entries.find((e) => e.id === 'manual-operation');
+  const next = trapezoid.insert('flowchart TD\n  A --> B');
+  assert.equal(next, 'flowchart TD\n  A --> B\nC[/Manual Operation\\]');
 });
 
 test('the Lane entry inserts a subgraph block, not a node shape', () => {

@@ -63,8 +63,20 @@ function editorTheme(EditorView) {
       color: 'var(--color-text-subtle)',
       border: 'none',
     },
+    // color-mix(...transparent), not a plain opaque --color-subtle-bg:
+    // CodeMirror's own selection-highlight layer (.cm-selectionBackground,
+    // from drawSelection() in basicSetup) renders at z-index: -2 — behind
+    // .cm-line's normal content flow, by design, so it shows through any
+    // *translucent* line background but is fully hidden by an *opaque*
+    // one. A solid fill here meant selecting text on the line the cursor
+    // is already on (the common case: you select a line, which puts the
+    // cursor there) showed no visible selection highlight at all — a real
+    // bug report, not a hypothetical (same problem, same fix needed, for
+    // .cm-error-line below). CodeMirror's own bundled default theme uses
+    // exactly this technique (a semi-transparent activeLine tint) for the
+    // same reason; this app's version just wasn't translucent.
     '.cm-activeLine': {
-      backgroundColor: 'var(--color-subtle-bg)',
+      backgroundColor: 'color-mix(in srgb, var(--color-subtle-bg) 55%, transparent)',
     },
     '.cm-activeLineGutter': {
       backgroundColor: 'var(--color-subtle-bg-hover)',
@@ -85,8 +97,11 @@ function editorTheme(EditorView) {
     // this same theme call gives it identical (tied) specificity, and
     // later-in-source-order wins a specificity tie, so listing it after
     // '.cm-activeLine' here is what makes it actually win.
+    // Translucent for the same reason as .cm-activeLine above — an opaque
+    // fill here would hide the selection highlight whenever the errored
+    // line is also selected (e.g. selecting it to copy/report the error).
     '.cm-error-line': {
-      backgroundColor: 'var(--color-danger-bg-hover)',
+      backgroundColor: 'color-mix(in srgb, var(--color-danger-bg-hover) 65%, transparent)',
     },
   });
 }

@@ -12,7 +12,7 @@ import {
   ChevronRightIcon,
   DatabaseShapeIcon,
   SubroutineShapeIcon,
-  DocumentShapeIcon,
+  TrapezoidShapeIcon,
   LaneShapeIcon,
   ParticipantShapeIcon,
   ActorShapeIcon,
@@ -105,7 +105,7 @@ function themeLabel(theme) {
 const PALETTE_GLYPH_ICONS = {
   database: DatabaseShapeIcon,
   subroutine: SubroutineShapeIcon,
-  document: DocumentShapeIcon,
+  trapezoid: TrapezoidShapeIcon,
   lane: LaneShapeIcon,
   participant: ParticipantShapeIcon,
   actor: ActorShapeIcon,
