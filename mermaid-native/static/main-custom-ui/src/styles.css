@@ -160,7 +160,6 @@ body {
 
 .diagram-section-body {
   padding-left: 4px;
-  border-left: 2px solid var(--color-border);
   margin-left: 8px;
 }
 
@@ -170,12 +169,22 @@ body {
 
 /* --- Diagram card --- */
 
+/* No hard outline — a soft shadow instead gives each card just enough depth
+   to read as a distinct surface without adding to the border count. Per
+   direct user feedback that this app had a border on nearly every element
+   (card/header/editor/preview/toolbar/dropdowns) and read as busier than
+   Atlassian's own spacing-led chrome; whitespace (the larger margin-bottom
+   here) now does more of the separation work that the border used to. */
 .diagram-card {
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  margin-bottom: 12px;
+  margin-bottom: 16px;
   background: var(--color-page-bg);
+  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.1), 0 0 0 1px rgba(9, 30, 66, 0.04);
   overflow: hidden;
+}
+
+:root[data-color-mode='dark'] .diagram-card {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .diagram-card-header {
@@ -183,7 +192,6 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border);
   background: var(--color-subtle-bg);
 }
 
@@ -536,12 +544,16 @@ body {
    padding/font-size/line-height via the styles it injects (only possible
    now that manifest.yml opts into unsafe-inline — see CodeMirrorEditor.jsx),
    so this only needs to own the outer frame, not the text styling. */
+/* Soft gray fill (background, not border) sets this apart from the card's
+   white body — matches how e.g. Confluence/Bitbucket code blocks read as a
+   distinct panel without a hard outline. Focus still gets a visible ring
+   (below) so keyboard/click focus stays unambiguous. */
 .codemirror-editor {
   min-height: 220px;
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   box-sizing: border-box;
   overflow: hidden;
+  background: var(--color-subtle-bg);
 }
 
 .codemirror-editor .cm-editor {
@@ -556,12 +568,20 @@ body {
 }
 
 .codemirror-editor:focus-within {
-  border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 1px var(--color-border-focus);
+  box-shadow: 0 0 0 2px var(--color-border-focus);
 }
 
 .codemirror-editor-hidden {
   display: none;
+}
+
+/* Highlights the line a Mermaid parse error points at (CodeMirrorEditor's
+   errorLine prop / errorLineField) — background tint stays subtle enough to
+   read as "look here" rather than a hard red bar; --color-danger-bg-hover
+   already exists as a light danger tint in both light/dark palettes (see
+   the button styles below), so this doesn't need its own dark-mode rule. */
+.cm-error-line {
+  background: var(--color-danger-bg-hover);
 }
 
 .codemirror-loading {
@@ -605,7 +625,6 @@ body {
   height: 100%;
   box-sizing: border-box;
   padding: 12px;
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   /* background-color/-image kept separate (not the `background` shorthand)
      so the dark-mode override below only needs to touch what actually
@@ -613,7 +632,10 @@ body {
      the "design canvas" look from the reference screenshot — reads as a
      deliberate surface rather than a stray blank rectangle, and stays
      subtle enough (low-opacity dots) not to compete with the diagram's own
-     shapes. */
+     shapes. No border: this bg-color + dot-grid combination is already
+     enough contrast against the card's white body to read as its own
+     surface without also needing a border — per direct user feedback on
+     border overuse. */
   background-color: #fafbfc;
   background-image: radial-gradient(circle, rgba(9, 30, 66, 0.12) 1px, transparent 1px);
   background-size: 16px 16px;
@@ -622,7 +644,6 @@ body {
 .diagram-canvas-wrap[data-surface='dark'] {
   background-color: #22272b;
   background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
-  border-color: #454f59;
 }
 
 .diagram-canvas {
@@ -662,21 +683,67 @@ body {
   height: 100%;
 }
 
+/* One rounded pill (not four individually-bordered buttons) — a shadow
+   gives it enough presence to float over the diagram without adding
+   another border, matching the reduced-border pass elsewhere in this
+   file. */
 .diagram-zoom-controls {
   position: absolute;
   right: 8px;
   bottom: 8px;
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
   padding: 4px;
   background: var(--color-overlay-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(9, 30, 66, 0.15), 0 0 0 1px rgba(9, 30, 66, 0.06);
 }
 
-.diagram-zoom-controls .btn-icon {
-  width: 28px;
+.zoom-control-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoom-control-btn:hover {
+  background: var(--color-subtle-bg-hover);
+}
+
+.zoom-control-btn:active {
+  background: var(--color-subtle-bg-active);
+}
+
+.zoom-control-btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.zoom-control-percent {
+  min-width: 44px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.zoom-control-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--color-border);
 }
 
 .diagram-loading {

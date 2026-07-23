@@ -46,9 +46,14 @@ function loadCodeMirror() {
 // chrome automatically, the same as every other input/button in this app.
 function editorTheme(EditorView) {
   return EditorView.theme({
+    // Transparent, not --color-input-bg: the wrapping .codemirror-editor
+    // div now supplies a uniform --color-subtle-bg panel behind both this
+    // and .cm-gutters below (a soft gray fill replacing the editor's old
+    // hard 1px border — see styles.css), so the content area shouldn't
+    // paint its own, different-colored background over that.
     '&': {
       color: 'var(--color-text)',
-      backgroundColor: 'var(--color-input-bg)',
+      backgroundColor: 'transparent',
     },
     '.cm-content': {
       caretColor: 'var(--color-text)',
@@ -67,11 +72,15 @@ function editorTheme(EditorView) {
   });
 }
 
-export default function CodeMirrorEditor({ value, onChange, onBlur }) {
+export default function CodeMirrorEditor({ value, onChange, onBlur, errorLine }) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
+  // Set once CodeMirror has loaded, alongside the StateEffect that drives
+  // errorLineField below — held in a ref (not state) since dispatching it
+  // doesn't need a React re-render, just a CodeMirror transaction.
+  const setErrorLineEffectRef = useRef(null);
   const [ready, setReady] = useState(false);
   onChangeRef.current = onChange;
   onBlurRef.current = onBlur;
@@ -81,12 +90,39 @@ export default function CodeMirrorEditor({ value, onChange, onBlur }) {
     loadCodeMirror().then(
       ([
         { basicSetup },
-        { EditorState },
-        { EditorView },
+        { EditorState, StateEffect, StateField },
+        { EditorView, Decoration },
         { syntaxHighlighting },
         { mermaidLanguage, mermaidHighlightStyle },
       ]) => {
       if (cancelled) return;
+
+      // Highlights the source line a Mermaid parse error points at (see
+      // extractErrorLine in mermaid-renderer.js) — a StateField driven by a
+      // StateEffect rather than a one-off DOM class toggle, since CodeMirror
+      // owns and re-renders its own DOM on every edit; a field is what
+      // survives that and stays correctly positioned as the user keeps
+      // typing (mapped through `tr.changes` like any other decoration).
+      const setErrorLine = StateEffect.define();
+      setErrorLineEffectRef.current = setErrorLine;
+      const errorLineField = StateField.define({
+        create: () => Decoration.none,
+        update(deco, tr) {
+          for (const effect of tr.effects) {
+            if (effect.is(setErrorLine)) {
+              if (effect.value == null) return Decoration.none;
+              const lineNumber = Math.min(Math.max(1, effect.value), tr.state.doc.lines);
+              const line = tr.state.doc.line(lineNumber);
+              return Decoration.set([
+                Decoration.line({ attributes: { class: 'cm-error-line' } }).range(line.from),
+              ]);
+            }
+          }
+          return deco.map(tr.changes);
+        },
+        provide: (field) => EditorView.decorations.from(field),
+      });
+
       const view = new EditorView({
         state: EditorState.create({
           doc: value || '',
@@ -95,6 +131,7 @@ export default function CodeMirrorEditor({ value, onChange, onBlur }) {
             mermaidLanguage,
             syntaxHighlighting(mermaidHighlightStyle),
             editorTheme(EditorView),
+            errorLineField,
             EditorView.lineWrapping,
             EditorView.contentAttributes.of({ spellcheck: 'false' }),
             EditorView.updateListener.of((update) => {
@@ -138,6 +175,19 @@ export default function CodeMirrorEditor({ value, onChange, onBlur }) {
       view.dispatch({ changes: { from: 0, to: current.length, insert: next } });
     }
   }, [value]);
+
+  // Re-highlights (or clears) the error line whenever the parse result
+  // upstream (DiagramView's onError) changes — independent of the doc-sync
+  // effect above, since an error can clear/change without the source text
+  // itself changing (e.g. switching themes doesn't touch source, but a fix
+  // to an earlier line does change source without necessarily changing
+  // which line the *next* error points at).
+  useEffect(() => {
+    const view = viewRef.current;
+    const setErrorLine = setErrorLineEffectRef.current;
+    if (!view || !setErrorLine) return;
+    view.dispatch({ effects: setErrorLine.of(errorLine ?? null) });
+  }, [errorLine, ready]);
 
   return (
     <div className="codemirror-editor">

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { invoke, view } from '@forge/bridge';
 import Spinner from '../../../src/Spinner';
 import SectionMessage from '../../../src/SectionMessage';
@@ -168,6 +168,16 @@ export default function App() {
   // this shipped, rather than kept as a parallel entry point.
   const [nodePopover, setNodePopover] = useState(null);
   const nodePopoverRef = useRef(null);
+  // Whether the popover renders below (default, matching the clicked node's
+  // getBoundingClientRect()) or above it. Fixes a real bug: with only one
+  // diagram on the panel, clicking a node near the bottom of the canvas
+  // anchored the popover at rect.bottom + 8, which for a bottom-row node can
+  // fall below window.innerHeight (the Forge iframe's own viewport, which
+  // this app can't scroll past) — clipping the color/border controls
+  // entirely with no way to reach them. Recomputed in the layout effect
+  // below rather than guessed up front, since popover height varies by
+  // diagram kind (state/ER popovers omit the icon row flowchart's has).
+  const [popoverPlacement, setPopoverPlacement] = useState('below');
   // Whether the panel is effectively rendering in dark mode (see
   // resolveEffectiveDark) — used only to pick a new diagram's starting
   // Mermaid theme (see addDiagram); never re-applied to existing diagrams.
@@ -182,6 +192,14 @@ export default function App() {
   // Diagram id whose remove button is showing an inline "are you sure?"
   // instead of removing immediately on click.
   const [pendingRemoveId, setPendingRemoveId] = useState(null);
+  // Per-diagram source line a Mermaid parse error currently points at (or
+  // undefined/null once it clears) — keyed by diagram id since several
+  // diagram cards can be in edit mode with independent errors at once.
+  // Populated by DiagramView's onError (preview pane) and consumed by
+  // CodeMirrorEditor's errorLine prop (editor pane), which are siblings
+  // under the same diagram card, not parent/child — hence lifting this up
+  // to App.jsx rather than passing it directly between them.
+  const [parseErrorLines, setParseErrorLines] = useState({});
   // Most recently removed diagram, kept around briefly so the removal can
   // be undone: { diagram, index } — index is where it lived so undo puts it
   // back in the same place rather than at the end of the list.
@@ -275,6 +293,29 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  // Measures the popover's actual rendered height (varies by diagram kind —
+  // see popoverPlacement above) and flips it above the clicked node whenever
+  // it wouldn't fit below within the iframe's own viewport. useLayoutEffect,
+  // not useEffect: it needs to land before the browser paints, or the
+  // popover would visibly flash at the clipped position first.
+  useLayoutEffect(() => {
+    if (!nodePopover || !nodePopoverRef.current) {
+      setPopoverPlacement('below');
+      return;
+    }
+    const { rect } = nodePopover;
+    const popoverHeight = nodePopoverRef.current.getBoundingClientRect().height;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    // Prefer below (matches the original behavior when it fits); only flip
+    // above when below doesn't fit but above actually has more room — a
+    // popover taller than either gap still has to render somewhere, and
+    // below is the existing, already-verified-correct default for that case.
+    setPopoverPlacement(
+      spaceBelow < popoverHeight + 8 && spaceAbove > spaceBelow ? 'above' : 'below'
+    );
+  }, [nodePopover]);
 
   // Closes the click-to-style popover on Escape or on any pointerdown
   // outside it — including the pointerdown that starts panning the canvas
@@ -479,6 +520,11 @@ export default function App() {
       delete next[id];
       return next;
     });
+    setParseErrorLines((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     persist(
       latestDiagramsRef.current.filter((d) => d.id !== id),
       { immediate: true }
@@ -674,7 +720,9 @@ export default function App() {
     const { rect } = nodePopover;
     const style = {
       left: Math.max(8, rect.left + rect.width / 2),
-      top: rect.bottom + 8,
+      ...(popoverPlacement === 'above'
+        ? { bottom: window.innerHeight - rect.top + 8 }
+        : { top: rect.bottom + 8 }),
     };
 
     return (
@@ -898,6 +946,7 @@ export default function App() {
                   value={diagram.source}
                   onChange={(source) => updateDiagram(diagram.id, { source })}
                   onBlur={flushSave}
+                  errorLine={parseErrorLines[diagram.id]}
                 />
               </div>
               <div
@@ -927,6 +976,9 @@ export default function App() {
                       nodePopover && nodePopover.diagramId === diagram.id
                         ? { kind: nodePopover.kind, nodeId: nodePopover.nodeId }
                         : null
+                    }
+                    onError={(err) =>
+                      setParseErrorLines((prev) => ({ ...prev, [diagram.id]: err?.line ?? null }))
                     }
                   />
                 </DiagramErrorBoundary>

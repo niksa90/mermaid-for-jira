@@ -134,7 +134,9 @@ export async function renderMermaid(id, source) {
   try {
     await mermaid.parse(trimmed);
   } catch (err) {
-    throw new Error(readableParseError(err));
+    const wrapped = new Error(readableParseError(err));
+    wrapped.line = extractErrorLine(err);
+    throw wrapped;
   }
   const { svg } = await mermaid.render(id, trimmed);
   return applyModernPolish(inlineSvgStyles(svg), id);
@@ -478,6 +480,22 @@ export function readableParseError(err) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);
+}
+
+// Extracts the 1-based source line a Mermaid parse error points at, so the
+// editor can highlight exactly the offending line instead of just showing a
+// flattened error string. Mermaid's jison-generated parsers (shared across
+// the flowchart/state/sequence/... grammars) format this consistently as
+// "Parse error on line N:" in err.message — confirmed against the real
+// mermaid package (v11.16.0) via a jsdom scratch render for flowchart,
+// state, and sequence syntax errors, not assumed from docs. Falls back to
+// null (no highlight, same "silent no-op for unsupported cases" convention
+// as the rest of this file) for any error shape that doesn't match rather
+// than guessing a line.
+export function extractErrorLine(err) {
+  const raw = err?.str || err?.message || String(err);
+  const match = raw.match(/on line (\d+)/i);
+  return match ? Number(match[1]) : null;
 }
 
 export function safeDiagramId(prefix, index) {

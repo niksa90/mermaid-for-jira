@@ -37,6 +37,12 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
   const dragRef = useRef(null);
   const [isPanning, setIsPanning] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // Live zoom readout for the combined pill control (viewRef/baseViewBoxRef
+  // are plain refs the SVG-attribute pan/zoom mutates directly, precisely
+  // so panning/zooming itself doesn't cost a React re-render on every wheel
+  // tick — this is the one place that *does* need a render, so it's tracked
+  // separately rather than promoting those refs to state wholesale).
+  const [zoomPercent, setZoomPercent] = useState(100);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -58,7 +64,17 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
     svgEl.setAttribute('height', '100%');
     svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     applyView();
+    setZoomPercent(100);
   }, [svg]);
+
+  // A narrower view (viewRef.width) than the diagram's natural size
+  // (baseViewBoxRef.width) means zoomed in, hence the inverse ratio.
+  function syncZoomPercent() {
+    const base = baseViewBoxRef.current;
+    const v = viewRef.current;
+    if (!base || !v) return;
+    setZoomPercent(Math.round((base.width / v.width) * 100));
+  }
 
   // Visual selection highlight for the click-to-style popover — a Miro-like
   // "this is what you're editing" affordance the raw node-color-picker
@@ -119,12 +135,14 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
       height: newHeight,
     };
     applyView();
+    syncZoomPercent();
   }
 
   function resetView() {
     if (!baseViewBoxRef.current) return;
     viewRef.current = { ...baseViewBoxRef.current };
     applyView();
+    setZoomPercent(100);
   }
 
   // Attached manually (not React's onWheel): React treats wheel listeners
@@ -290,29 +308,39 @@ export default function DiagramCanvas({ svg, theme = 'default', onNodeClick, sel
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: svg }}
       />
+      {/* One rounded pill instead of four separately-bordered buttons
+          ([-][100%][+][⛶], per direct user request referencing Figma/Miro's
+          zoom control) — the percent readout doubles as the reset button
+          (title="Reset zoom"), so there's no separate ⤢ button anymore. */}
       <div className="diagram-zoom-controls">
         <button
           type="button"
-          className="btn btn-subtle btn-icon"
+          className="zoom-control-btn"
           title="Zoom out (or Ctrl+scroll)"
           onClick={() => zoomAt(1 / ZOOM_STEP)}
         >
           −
         </button>
-        <button type="button" className="btn btn-subtle btn-icon" title="Reset zoom" onClick={resetView}>
-          ⤢
+        <button
+          type="button"
+          className="zoom-control-btn zoom-control-percent"
+          title="Reset zoom"
+          onClick={resetView}
+        >
+          {zoomPercent}%
         </button>
         <button
           type="button"
-          className="btn btn-subtle btn-icon"
+          className="zoom-control-btn"
           title="Zoom in (or Ctrl+scroll)"
           onClick={() => zoomAt(ZOOM_STEP)}
         >
           +
         </button>
+        <div className="zoom-control-divider" />
         <button
           type="button"
-          className="btn btn-subtle btn-icon"
+          className="zoom-control-btn"
           title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
           onClick={toggleFullscreen}
         >
