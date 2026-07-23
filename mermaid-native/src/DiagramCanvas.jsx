@@ -224,12 +224,34 @@ export default function DiagramCanvas({
       box = { x: 0, y: 0, width, height };
     }
     baseViewBoxRef.current = { minX: box.x, minY: box.y, width: box.width, height: box.height };
-    viewRef.current = { ...baseViewBoxRef.current };
     svgEl.setAttribute('width', '100%');
     svgEl.setAttribute('height', '100%');
     svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-    applyView();
-    setZoomPercent(100);
+    // Only snap the view to the diagram's natural bounds on a genuine
+    // first mount (viewRef.current is null exactly once, before this
+    // component's first svg). Every later run of this effect is a
+    // re-render of an *edit* to this same diagram — a keystroke in the
+    // node-style popover's label field, a color-picker drag, a theme
+    // switch — and dangerouslySetInnerHTML has just replaced the whole SVG
+    // element regardless, wiping out whatever viewBox this component
+    // itself set on the previous one. Resetting pan/zoom back to 100% on
+    // every single keystroke was a real, reported "jumpy" complaint: it
+    // wasn't very noticeable while the only way to edit a node's text was
+    // the separate CodeMirror pane, but the node-style popover's live
+    // label field sits directly over the diagram the user is actively
+    // looking at while typing, so a full-view snap on every character
+    // became acutely visible. Preserving viewRef.current instead keeps the
+    // user's current pan/zoom frame steady while content reflows inside
+    // it — still re-applied via applyView() below, onto the new svg
+    // element, since that element itself is brand new each time.
+    if (!viewRef.current) {
+      viewRef.current = { ...baseViewBoxRef.current };
+      applyView();
+      setZoomPercent(100);
+    } else {
+      applyView();
+      syncZoomPercent();
+    }
   }, [svg]);
 
   // Mermaid's own edge/relationship/transition strokes render thin (often
