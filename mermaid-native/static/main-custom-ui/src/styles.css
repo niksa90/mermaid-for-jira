@@ -575,14 +575,10 @@ body {
   display: none;
 }
 
-/* Highlights the line a Mermaid parse error points at (CodeMirrorEditor's
-   errorLine prop / errorLineField) — background tint stays subtle enough to
-   read as "look here" rather than a hard red bar; --color-danger-bg-hover
-   already exists as a light danger tint in both light/dark palettes (see
-   the button styles below), so this doesn't need its own dark-mode rule. */
-.cm-error-line {
-  background: var(--color-danger-bg-hover);
-}
+/* .cm-error-line's actual styling lives in CodeMirrorEditor.jsx's
+   editorTheme() now, not here — see the comment there for why a plain
+   class rule in this stylesheet loses a specificity fight against
+   CodeMirror's own .cm-activeLine rule whenever the two coincide. */
 
 .codemirror-loading {
   display: flex;

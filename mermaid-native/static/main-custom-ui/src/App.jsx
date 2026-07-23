@@ -168,16 +168,28 @@ export default function App() {
   // this shipped, rather than kept as a parallel entry point.
   const [nodePopover, setNodePopover] = useState(null);
   const nodePopoverRef = useRef(null);
-  // Whether the popover renders below (default, matching the clicked node's
-  // getBoundingClientRect()) or above it. Fixes a real bug: with only one
-  // diagram on the panel, clicking a node near the bottom of the canvas
-  // anchored the popover at rect.bottom + 8, which for a bottom-row node can
-  // fall below window.innerHeight (the Forge iframe's own viewport, which
-  // this app can't scroll past) — clipping the color/border controls
-  // entirely with no way to reach them. Recomputed in the layout effect
-  // below rather than guessed up front, since popover height varies by
-  // diagram kind (state/ER popovers omit the icon row flowchart's has).
-  const [popoverPlacement, setPopoverPlacement] = useState('below');
+  // The popover's actual `top` (position: fixed, viewport px), computed and
+  // clamped in the layout effect below rather than derived inline from
+  // nodePopover.rect. Fixes a real bug: this used to always be
+  // rect.bottom + 8, which for a bottom-row node (single diagram on the
+  // panel, tall canvas) can fall below window.innerHeight — the Forge
+  // iframe's own viewport, which this app can't scroll past — clipping the
+  // color/border controls entirely with no way to reach them.
+  //
+  // A first fix just flipped to anchoring above the node instead (rect.top
+  // - popoverHeight - 8) whenever below didn't fit. That introduced a new
+  // failure: for a node positioned high enough that *neither* side has
+  // popoverHeight + 8 of room (a short canvas, or a popover taller than
+  // either gap — flowchart's popover is taller than state/ER's, since it
+  // has an extra icon row), flipping unconditionally to "above" could push
+  // the popover's own top edge above y=0, clipping it at the *top* instead
+  // — trading one clipped edge for the other rather than actually fixing
+  // it. Storing a single already-clamped `top` number (not an
+  // above/below enum) fixes this properly: prefer below, fall back to
+  // above, and if neither fits, clamp into [8, window.innerHeight -
+  // popoverHeight - 8] so the popover is guaranteed to stay fully
+  // on-screen rather than committing to whichever side "sounds" better.
+  const [popoverTop, setPopoverTop] = useState(0);
   // Whether the panel is effectively rendering in dark mode (see
   // resolveEffectiveDark) — used only to pick a new diagram's starting
   // Mermaid theme (see addDiagram); never re-applied to existing diagrams.
@@ -300,21 +312,24 @@ export default function App() {
   // not useEffect: it needs to land before the browser paints, or the
   // popover would visibly flash at the clipped position first.
   useLayoutEffect(() => {
-    if (!nodePopover || !nodePopoverRef.current) {
-      setPopoverPlacement('below');
-      return;
-    }
+    if (!nodePopover || !nodePopoverRef.current) return;
     const { rect } = nodePopover;
+    const margin = 8;
     const popoverHeight = nodePopoverRef.current.getBoundingClientRect().height;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    // Prefer below (matches the original behavior when it fits); only flip
-    // above when below doesn't fit but above actually has more room — a
-    // popover taller than either gap still has to render somewhere, and
-    // below is the existing, already-verified-correct default for that case.
-    setPopoverPlacement(
-      spaceBelow < popoverHeight + 8 && spaceAbove > spaceBelow ? 'above' : 'below'
-    );
+    const belowTop = rect.bottom + margin;
+    const aboveTop = rect.top - margin - popoverHeight;
+    let top;
+    if (belowTop + popoverHeight <= window.innerHeight - margin) {
+      top = belowTop; // preferred: matches the original always-below behavior
+    } else if (aboveTop >= margin) {
+      top = aboveTop; // below doesn't fit; above does
+    } else {
+      // Neither side has enough room (short canvas / a popover taller than
+      // either gap) — clamp fully into the viewport instead of picking a
+      // side that would still clip one edge or the other.
+      top = Math.min(Math.max(margin, belowTop), Math.max(margin, window.innerHeight - popoverHeight - margin));
+    }
+    setPopoverTop(top);
   }, [nodePopover]);
 
   // Closes the click-to-style popover on Escape or on any pointerdown
@@ -720,9 +735,7 @@ export default function App() {
     const { rect } = nodePopover;
     const style = {
       left: Math.max(8, rect.left + rect.width / 2),
-      ...(popoverPlacement === 'above'
-        ? { bottom: window.innerHeight - rect.top + 8 }
-        : { top: rect.bottom + 8 }),
+      top: popoverTop,
     };
 
     return (

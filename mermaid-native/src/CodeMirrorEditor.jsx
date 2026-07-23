@@ -69,6 +69,25 @@ function editorTheme(EditorView) {
     '.cm-activeLineGutter': {
       backgroundColor: 'var(--color-subtle-bg-hover)',
     },
+    // Must be registered here, in the same EditorView.theme() call as
+    // .cm-activeLine above (and after it) — not as a plain class in
+    // styles.css. EditorView.theme() rewrites a bare selector like
+    // `.cm-activeLine` into `.cm-editor.<generated-scope-class>
+    // .cm-activeLine` (confirmed by reading @codemirror/view's own
+    // buildTheme()/StyleModule source, not guessed), which has strictly
+    // higher CSS specificity than a plain `.cm-error-line` class rule
+    // sitting in the app's static stylesheet. The line CodeMirror's own
+    // cursor sits on always carries both classes simultaneously — which is
+    // also the single most common case in practice, since a user is
+    // usually actively editing the line that just broke — so a
+    // lower-specificity rule for the error highlight was silently losing
+    // to the active-line one every time the two coincided. Landing it in
+    // this same theme call gives it identical (tied) specificity, and
+    // later-in-source-order wins a specificity tie, so listing it after
+    // '.cm-activeLine' here is what makes it actually win.
+    '.cm-error-line': {
+      backgroundColor: 'var(--color-danger-bg-hover)',
+    },
   });
 }
 
