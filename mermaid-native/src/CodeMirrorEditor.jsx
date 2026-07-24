@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Spinner from './Spinner';
 import { diffRange } from './text-diff.js';
 
@@ -209,22 +209,28 @@ export default function CodeMirrorEditor({ value, onChange, onBlur, errorLine })
   // directly in this editor) is a same-value no-op.
   //
   // Replaces only the common-prefix/suffix-trimmed differing middle
-  // section, NOT the whole document — a real, reported bug when this used
-  // a blanket `{ from: 0, to: current.length, insert: next }` replace:
-  // nuking and reinserting the entire document on every keystroke typed
-  // into the *popover's* label field (not this editor) discards the
-  // cursor's actual position along with everything else, so CodeMirror's
-  // default post-transaction "keep the selection visible" behavior had to
-  // treat the cursor as having jumped to wherever a full replace happens
-  // to land it — scrolling this editor (and, since its own scroll
-  // container isn't independently bounded, the whole page) up to reveal
-  // it, even though the user was actively typing in a popover further
-  // down the page, nowhere near this editor. A targeted change over just
-  // the actually-differing range lets CodeMirror's normal change-mapping
-  // carry the existing selection through untouched when the edit lands
-  // elsewhere in the document (the common case for a label/color tweak),
-  // so there's nothing for it to "reveal" and nothing to scroll to.
-  useEffect(() => {
+  // section, NOT the whole document — dispatching a full
+  // `{ from: 0, to: current.length, insert: next }` replace discards the
+  // cursor's actual position for no reason on every keystroke typed
+  // elsewhere (the popover's label field, a color drag), which is worth
+  // avoiding on its own (better undo history, no cursor churn) even though
+  // it turned out not to be the cause of the "jumps up to code" bug (see
+  // below).
+  //
+  // useLayoutEffect, not useEffect, and this is load-bearing, not just a
+  // style choice: this dispatch is what actually resizes .codemirror-editor
+  // (no max-height — see styles.css) whenever the new source wraps a line
+  // differently, and App.jsx's own useLayoutEffect (captureBoardScrollAnchor
+  // / the effect keyed on `diagrams`) depends on that resize having already
+  // happened by the time *it* runs, so it can compute .board-container's
+  // corrected scrollTop against the final, post-resize layout. React fires
+  // a child's layout effects before its parent's within the same commit,
+  // so as a useLayoutEffect this beats App.jsx's to the punch; as the
+  // plain useEffect it used to be, the resize happened *after* App.jsx had
+  // already "restored" scroll against the stale, pre-resize scrollHeight —
+  // confirmed as the actual reason that first attempt at the scroll-anchor
+  // fix didn't hold up under real re-testing.
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
