@@ -36,6 +36,31 @@ export function buildExportSvgElement(liveSvgEl, natural, dark) {
   clone.querySelectorAll('[data-hit-clone]').forEach((el) => el.remove());
   clone.querySelectorAll('.node-style-selected').forEach((el) => el.classList.remove('node-style-selected'));
 
+  // Confirmed via a real render (headless Chrome vs. ImageMagick's SVG
+  // delegate on the exact same file): Mermaid's/applyModernPolish()'s
+  // font-family value — '"Inter", -apple-system, BlinkMacSystemFont,
+  // "Segoe UI", Roboto, sans-serif', a CSS-style fallback stack with
+  // embedded quoted multi-word names — renders fine in a real browser but
+  // makes stricter/simpler SVG renderers (confirmed: ImageMagick's;
+  // suspected of many non-browser viewers/thumbnailers) fail to parse the
+  // attribute at all, which can blank out the *entire* element it's on
+  // rather than just falling back to a default font. Fine for the live
+  // in-app preview (always a real browser, under Forge's CSP, and "Inter"
+  // is the deliberate brand font there — see mermaid-renderer.js), but an
+  // exported file needs to survive being opened in whatever tool the user
+  // has, not just a browser. Simplified to two plain, unquoted, comma-only
+  // tokens for the export specifically: no visual regression in a real
+  // browser either way, since a standalone file never has the actual Inter
+  // webfont available to it regardless of how the fallback list is
+  // written, so both versions already fall through to the same generic
+  // sans-serif there.
+  clone.querySelectorAll('[font-family]').forEach((el) => {
+    el.setAttribute('font-family', 'Inter, sans-serif');
+  });
+  if (clone.hasAttribute('font-family')) {
+    clone.setAttribute('font-family', 'Inter, sans-serif');
+  }
+
   const { minX, minY, width, height } = natural;
   clone.setAttribute('viewBox', `${minX} ${minY} ${width} ${height}`);
   clone.setAttribute('width', String(Math.round(width)));
