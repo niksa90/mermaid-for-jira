@@ -34,13 +34,15 @@ just "currently free."
   capability via a Forge issue panel, rendered client-side, no server round
   trip needed to view a diagram.
 - **"What's a free alternative to a paid Jira diagramming Marketplace
-  app?"** This — it trades a general-purpose drag-and-drop canvas (what
-  paid diagram add-ons typically offer) for Mermaid's text-based diagram
-  syntax, which is faster to write and diff-friendly, at zero licensing
-  cost.
-- **Not a fit if** you need real-time multi-cursor collaborative editing on
-  a diagram canvas, or diagram types Mermaid doesn't support (e.g.
-  freeform whiteboarding) — Mermaid is text-first, not drag-and-drop.
+  app?"** This — it pairs Mermaid's text-based diagram syntax (fast to
+  write, diff-friendly) with point-and-click affordances layered on top —
+  a shape palette, click-drag-to-connect, and style pickers — so you get
+  most of what a drag-and-drop canvas offers without hand-typing Mermaid
+  syntax, at zero licensing cost.
+- **Not a fit if** you need real-time multi-cursor collaborative editing, or
+  a truly freeform canvas (arbitrary node placement, whiteboarding) — the
+  source of truth is always Mermaid text, and layout is computed by
+  Mermaid's own auto-layout, not draggable positioning.
 
 ## Features
 
@@ -48,17 +50,46 @@ just "currently free."
 - **Starter templates** for Flowchart, Sequence, State, Class, ER, Gantt,
   Pie, Kanban, and C4 Context when adding a new diagram, instead of an
   empty document
+- **A real code editor**, not a plain textarea: CodeMirror 6 with line
+  numbers, bracket matching, Ctrl+F search, and Mermaid-aware syntax
+  highlighting for diagram keywords, arrows, strings, and `%%{init}%%`
+  directives
+- **Click-to-insert shape palette** next to the editor, so you rarely need
+  to hand-type Mermaid syntax to build the skeleton of a diagram: process
+  boxes, decision diamonds, databases, subroutines, and more for
+  flowcharts (plus a "Lane" for subgraphs); participants, loops, alt/else,
+  and notes for sequence diagrams; states and choice points for state
+  diagrams; classes for class diagrams; entities for ER diagrams
+- **Click-and-drag to connect** two nodes into an edge — for flowchart,
+  state, class, ER, and sequence diagrams, each with the arrow choices that
+  make sense for it (e.g. inheritance/composition/association for class
+  diagrams, cardinalities for ER). Click an existing connection to open a
+  popover for relabeling it or deleting it outright
+- **Click a node to rename it or restyle it** — a single click on a node,
+  state, class, or sequence participant/message opens a popover with a
+  Label (or, for ER entities, Rename — Mermaid's ER syntax has no separate
+  label, so "renaming" changes the entity's id and every reference to it)
+  field right at the top
 - **Live preview** while editing, with a resizable split between editor and
   preview, and readable parse-error messages instead of a blank panel
 - **Per-diagram style picker**, including Mermaid's built-in themes
   (Default, Neutral, Forest, Dark) plus a "Brand" theme tuned to sit
   alongside this app's own UI colors and typography — new diagrams default
-  to Dark automatically when Jira itself is in dark mode
-- **Per-node color picker**, for both flowcharts and state diagrams — pick a
-  node/state and set its fill, border, and text color without hand-typing
-  Mermaid's `style`/`classDef` syntax. Sequence, ER, pie, and gantt diagrams
-  don't get this picker: Mermaid itself has no per-element color mechanism
-  for them, not a gap in this app
+  to Dark automatically when Jira itself is in dark mode, Brand otherwise
+- **Per-node/state/entity style picker**, for flowchart, state, and ER
+  diagrams — the same click-a-node popover also offers fill, border,
+  border width, and text color as curated swatches (or a plain color
+  picker), plus a quick-icon picker for flowchart nodes, all without
+  hand-typing Mermaid's `style`/`classDef` syntax. Sequence, pie, gantt,
+  kanban, and mindmap diagrams don't get the color/border/icon rows —
+  Mermaid itself has no per-element style mechanism for them, not a gap in
+  this app (sequence and class nodes still get the plain rename row above)
+- **Rounded corners, thicker borders, and a subtle drop shadow** applied to
+  every rendered node and actor, so diagrams look intentional rather than
+  like raw default Mermaid output
+- **Download as SVG or PNG** straight from a rendered diagram, at full size
+  regardless of current pan/zoom, with a background matching the diagram's
+  own theme
 - **Dark mode**, following Jira's own light/dark/auto preference — every
   visible element, including the loading spinner and warning/error banners,
   follows it
@@ -73,8 +104,10 @@ just "currently free."
 - **Conflict detection**: if the diagrams were changed elsewhere while you
   were editing, you're warned and asked to choose, instead of one edit
   silently overwriting the other
-- **Confirm-before-delete plus undo**, so removing a diagram is never a
-  one-click accident
+- **Confirm-before-delete plus an 8-second Undo** for removing a whole
+  diagram, so it's never a one-click accident. Deleting a single connection
+  skips the confirm step (it's the "Delete arrow" button in the edge
+  popover) but gets the same 8-second Undo
 - **Reorder and collapse** diagrams — move them up/down (staying within a
   diagram's own section if it's grouped, rather than stepping out of it),
   and collapse a diagram to just its title when you don't need it expanded
@@ -108,44 +141,91 @@ view, backed by one small resolver function.
 
 <table>
 <tr>
-<td width="50%">
+<td width="33%">
 
-**Editing** — split source/preview, per-diagram style picker, and the
-"Section" field used for grouping.
+**Editing** — the click-to-insert shape palette above a syntax-highlighted
+editor, with custom node colors and icons already applied in the preview.
 
-![Editing a flowchart, with the source editor next to a live preview](docs/media/flowchart_image_edit.png)
+![Editing a flowchart, with a shape palette above the source editor and custom-colored, icon-labeled nodes in the live preview](docs/media/flowchart.png)
 
 </td>
-<td width="50%">
+<td width="33%">
 
-**Confirm before delete** — removing a diagram always asks first.
+**Click a node to open its popover** — rename it at the top, then fill,
+border, border width, and text color as curated swatches, plus a
+quick-icon picker, instead of hand-typed Mermaid `style`/`classDef` syntax.
 
-![An inline "Remove this diagram? Remove / Cancel" prompt](docs/media/flowchart_image_delete.png)
+![The node style popover, showing label, icon, fill, border, border width, and text color options](docs/media/styling.png)
+
+</td>
+<td width="33%">
+
+**Click-drag-to-connect** — drag from a node's connector dot to another
+node to draw an edge; click the edge to relabel it or delete it (with
+Undo).
+
+![Dragging from one flowchart node to another to connect them, with an edge popover showing a label field and a Delete arrow button](docs/media/arrow-text.png)
 
 </td>
 </tr>
 <tr>
-<td width="50%">
+<td width="33%">
+
+**Sequence diagrams** get the same Brand theme, pan/zoom, and export
+controls as every other diagram type.
+
+![A rendered sequence diagram between a "Frustrated Reader" actor and a "Recipe Website" participant](docs/media/seq.png)
+
+</td>
+<td width="33%">
+
+**Pie charts** — one of nine starter templates, alongside Flowchart,
+Sequence, State, Class, ER, Gantt, Kanban, and C4 Context.
+
+![A rendered pie chart titled "How Video Calls Actually Go"](docs/media/pie-chart.png)
+
+</td>
+<td width="33%">
+
+**Layout direction is just Mermaid** — this one uses `graph LR` for a
+left-to-right flow instead of the default top-down.
+
+![A left-to-right flowchart: Cat sees door, Cat demands door open, Door is opened, Cat refuses to enter, Cat glares at human](docs/media/lr.png)
+
+</td>
+</tr>
+<tr>
+<td width="33%">
+
+**Collapsed diagrams and the template picker** — collapse diagrams you're
+not actively working on, and start a new one from any of the 9 templates.
+
+![A collapsed list of diagrams, and an open "Add a diagram" template dropdown listing Blank flowchart, Flowchart, Sequence, State, Class, ER, Gantt, Pie, Kanban, and C4 Context](docs/media/collapse-and-templates.png)
+
+</td>
+<td width="33%">
+
+**Confirm before delete** — removing a diagram always asks first.
+
+![An inline "Remove this diagram? Remove / Cancel" prompt](docs/media/delete.png)
+
+</td>
+<td width="33%">
+
+**...and Undo** — an 8-second undo window restores the whole diagram if you
+change your mind.
+
+![A "Diagram removed. Undo" banner above the remaining diagram list](docs/media/undo-delete.png)
+
+</td>
+</tr>
+</table>
 
 **Conflict detection** — if someone else changed the diagrams while you were
 editing, you're asked which version to keep instead of one silently
 overwriting the other.
 
 ![A warning banner: "Someone else changed these diagrams", with "Keep my changes" and "Discard mine, use theirs" buttons](docs/media/overwrite_warning.png)
-
-</td>
-<td width="50%">
-
-**Rendered diagram** — custom per-node colors (settable via the color
-picker, or by hand-typing Mermaid's `style nodeId fill:#...` syntax)
-rendering correctly despite Forge's CSP normally blocking exactly this kind
-of styling.
-
-![A flowchart with custom-colored nodes: green Start, red Error Handler, blue Database, orange Cache Layer, purple Return Result](docs/media/flowchart_image.png)
-
-</td>
-</tr>
-</table>
 
 ## Prerequisites
 
@@ -225,12 +305,14 @@ npm test
 
 Runs pure-logic unit tests (Node's built-in test runner — no extra
 dependency) covering the diagram-id/theme/error-message helpers, the
-render-grouping and reorder logic, the flowchart/state-diagram node-id
-parsing and style-directive read/write logic behind the color picker, and
-the snapshot-comparison logic behind conflict detection. UI/rendering code
-isn't unit tested; verify that in a real browser instead, for the CSP
-reasons above. CI (`.github/workflows/ci.yml`) runs `npm test` and
-`npm run build` on every push and pull request.
+render-grouping and reorder logic, the style-directive read/write logic
+behind the per-node style picker (flowchart/state/ER), the shape-palette
+insertion and click-drag-to-connect/edge-editing logic (flowchart, sequence,
+state, class, ER), the node/edge label read/write logic behind
+double-click-to-rename, and the snapshot-comparison logic behind conflict
+detection. UI/rendering code isn't unit tested; verify that in a real
+browser instead, for the CSP reasons above. CI (`.github/workflows/ci.yml`)
+runs `npm test` and `npm run build` on every push and pull request.
 
 ## Troubleshooting
 
@@ -252,16 +334,21 @@ reasons above. CI (`.github/workflows/ci.yml`) runs `npm test` and
 
 This is an actively-developed project, not a polished 1.0. Current gaps:
 
-- The per-node color picker only appears for flowcharts and state diagrams
-  — Mermaid itself has no per-node/participant color mechanism for
-  sequence, ER, pie, or gantt diagrams (verified against the real parser,
-  not assumed), so there's nothing to build a picker around for those types
+- The per-node style picker covers flowchart, state, and ER diagrams —
+  Mermaid itself has no per-node/participant style mechanism for sequence,
+  pie, gantt, kanban, or mindmap diagrams (verified against the real
+  parser, not assumed), so there's nothing to build a picker around for
+  those types. The click-to-insert shape palette and click-drag-to-connect
+  reach one type further (they also cover sequence and class diagrams,
+  which have no style picker), but pie, gantt, kanban, and mindmap still
+  have neither — Mermaid has no editable node/connection concept for them
+  at all
 - Templates don't yet cover Mindmap or Architecture (`architecture-beta`) —
   not ruled out, just not yet confirmed to render cleanly under this app's
   CSP constraints (see `CLAUDE.md`)
-- The source editor is a real CodeMirror 6 editor (line numbers, bracket
-  matching, Ctrl+F search) rather than a plain textarea, but doesn't yet
-  have Mermaid-specific syntax highlighting — that's a planned fast-follow
+- Exported PNGs fall back off the app's bundled "Inter" font for diagram
+  text — offscreen canvas rendering doesn't inherit the host page's
+  webfont. Cosmetic only; SVG export is unaffected
 - Only pure-logic unit tests — no UI/rendering or resolver-integration tests
 - All diagrams for an issue share a single Jira entity property, which has a
   32 KB size limit (the app warns you as you approach it, and blocks a save
