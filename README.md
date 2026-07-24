@@ -139,17 +139,10 @@ view, backed by one small resolver function.
 
 ## Screenshots
 
-<table>
-<tr>
-<td width="33%">
-
 **Editing** — the click-to-insert shape palette above a syntax-highlighted
 editor, with custom node colors and icons already applied in the preview.
 
 ![Editing a flowchart, with a shape palette above the source editor and custom-colored, icon-labeled nodes in the live preview](docs/media/flowchart.png)
-
-</td>
-<td width="33%">
 
 **Click a node to open its popover** — rename it at the top, then fill,
 border, border width, and text color as curated swatches, plus a
@@ -157,69 +150,40 @@ quick-icon picker, instead of hand-typed Mermaid `style`/`classDef` syntax.
 
 ![The node style popover, showing label, icon, fill, border, border width, and text color options](docs/media/styling.png)
 
-</td>
-<td width="33%">
-
 **Click-drag-to-connect** — drag from a node's connector dot to another
 node to draw an edge; click the edge to relabel it or delete it (with
 Undo).
 
 ![Dragging from one flowchart node to another to connect them, with an edge popover showing a label field and a Delete arrow button](docs/media/arrow-text.png)
 
-</td>
-</tr>
-<tr>
-<td width="33%">
-
 **Sequence diagrams** get the same Brand theme, pan/zoom, and export
 controls as every other diagram type.
 
 ![A rendered sequence diagram between a "Frustrated Reader" actor and a "Recipe Website" participant](docs/media/seq.png)
-
-</td>
-<td width="33%">
 
 **Pie charts** — one of nine starter templates, alongside Flowchart,
 Sequence, State, Class, ER, Gantt, Kanban, and C4 Context.
 
 ![A rendered pie chart titled "How Video Calls Actually Go"](docs/media/pie-chart.png)
 
-</td>
-<td width="33%">
-
 **Layout direction is just Mermaid** — this one uses `graph LR` for a
 left-to-right flow instead of the default top-down.
 
 ![A left-to-right flowchart: Cat sees door, Cat demands door open, Door is opened, Cat refuses to enter, Cat glares at human](docs/media/lr.png)
-
-</td>
-</tr>
-<tr>
-<td width="33%">
 
 **Collapsed diagrams and the template picker** — collapse diagrams you're
 not actively working on, and start a new one from any of the 9 templates.
 
 ![A collapsed list of diagrams, and an open "Add a diagram" template dropdown listing Blank flowchart, Flowchart, Sequence, State, Class, ER, Gantt, Pie, Kanban, and C4 Context](docs/media/collapse-and-templates.png)
 
-</td>
-<td width="33%">
-
 **Confirm before delete** — removing a diagram always asks first.
 
 ![An inline "Remove this diagram? Remove / Cancel" prompt](docs/media/delete.png)
-
-</td>
-<td width="33%">
 
 **...and Undo** — an 8-second undo window restores the whole diagram if you
 change your mind.
 
 ![A "Diagram removed. Undo" banner above the remaining diagram list](docs/media/undo-delete.png)
-
-</td>
-</tr>
-</table>
 
 **Conflict detection** — if someone else changed the diagrams while you were
 editing, you're asked which version to keep instead of one silently
