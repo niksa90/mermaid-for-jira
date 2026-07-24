@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Spinner from './Spinner';
+import { diffRange } from './text-diff.js';
 
 let cmPromise = null;
 /** Lazily loads CodeMirror so it isn't in the main bundle — it's only ever
@@ -195,19 +196,42 @@ export default function CodeMirrorEditor({ value, onChange, onBlur, errorLine })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Syncs external value changes (e.g. switching which diagram is shown)
-  // into the already-mounted editor. Guarded on an actual diff so this
-  // doesn't fight the user's own typing: onChange already updated `value`
-  // to match what CodeMirror holds by the time this re-runs, so the
-  // common case is a same-value no-op.
+  // Syncs external value changes into the already-mounted editor — not
+  // just "switching which diagram is shown" (this component doesn't even
+  // remount across that, App.jsx keys the whole diagram-card by id), but
+  // also the *same* diagram's source being edited from somewhere other
+  // than this textbox: most commonly the node-style popover's live label
+  // field or a color/border change, both of which call updateDiagram()
+  // and land here as a changed `value` prop exactly like any other write
+  // to diagram.source. Guarded on an actual diff so this doesn't fight the
+  // user's own typing: onChange already updated `value` to match what
+  // CodeMirror holds by the time this re-runs, so the common case (typing
+  // directly in this editor) is a same-value no-op.
+  //
+  // Replaces only the common-prefix/suffix-trimmed differing middle
+  // section, NOT the whole document — a real, reported bug when this used
+  // a blanket `{ from: 0, to: current.length, insert: next }` replace:
+  // nuking and reinserting the entire document on every keystroke typed
+  // into the *popover's* label field (not this editor) discards the
+  // cursor's actual position along with everything else, so CodeMirror's
+  // default post-transaction "keep the selection visible" behavior had to
+  // treat the cursor as having jumped to wherever a full replace happens
+  // to land it — scrolling this editor (and, since its own scroll
+  // container isn't independently bounded, the whole page) up to reveal
+  // it, even though the user was actively typing in a popover further
+  // down the page, nowhere near this editor. A targeted change over just
+  // the actually-differing range lets CodeMirror's normal change-mapping
+  // carry the existing selection through untouched when the edit lands
+  // elsewhere in the document (the common case for a label/color tweak),
+  // so there's nothing for it to "reveal" and nothing to scroll to.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
     const next = value || '';
-    if (current !== next) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: next } });
-    }
+    if (current === next) return;
+
+    view.dispatch({ changes: diffRange(current, next) });
   }, [value]);
 
   // Re-highlights (or clears) the error line whenever the parse result
