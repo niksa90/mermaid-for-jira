@@ -6,6 +6,8 @@
  * actually downloading a file in a real browser after any change here.
  */
 
+import { ensureXlinkNamespaceDeclared } from './mermaid-renderer.js';
+
 // Matches .diagram-canvas-wrap[data-surface] in styles.css — the exported
 // file's background should match what the user actually sees on screen
 // (a diagram's surface follows its own Mermaid theme, not Jira's chrome —
@@ -34,6 +36,31 @@ export function buildExportSvgElement(liveSvgEl, natural, dark) {
   clone.querySelectorAll('[data-hit-clone]').forEach((el) => el.remove());
   clone.querySelectorAll('.node-style-selected').forEach((el) => el.classList.remove('node-style-selected'));
 
+  // Confirmed via a real render (headless Chrome vs. ImageMagick's SVG
+  // delegate on the exact same file): Mermaid's/applyModernPolish()'s
+  // font-family value — '"Inter", -apple-system, BlinkMacSystemFont,
+  // "Segoe UI", Roboto, sans-serif', a CSS-style fallback stack with
+  // embedded quoted multi-word names — renders fine in a real browser but
+  // makes stricter/simpler SVG renderers (confirmed: ImageMagick's;
+  // suspected of many non-browser viewers/thumbnailers) fail to parse the
+  // attribute at all, which can blank out the *entire* element it's on
+  // rather than just falling back to a default font. Fine for the live
+  // in-app preview (always a real browser, under Forge's CSP, and "Inter"
+  // is the deliberate brand font there — see mermaid-renderer.js), but an
+  // exported file needs to survive being opened in whatever tool the user
+  // has, not just a browser. Simplified to two plain, unquoted, comma-only
+  // tokens for the export specifically: no visual regression in a real
+  // browser either way, since a standalone file never has the actual Inter
+  // webfont available to it regardless of how the fallback list is
+  // written, so both versions already fall through to the same generic
+  // sans-serif there.
+  clone.querySelectorAll('[font-family]').forEach((el) => {
+    el.setAttribute('font-family', 'Inter, sans-serif');
+  });
+  if (clone.hasAttribute('font-family')) {
+    clone.setAttribute('font-family', 'Inter, sans-serif');
+  }
+
   const { minX, minY, width, height } = natural;
   clone.setAttribute('viewBox', `${minX} ${minY} ${width} ${height}`);
   clone.setAttribute('width', String(Math.round(width)));
@@ -60,7 +87,19 @@ export function buildExportSvgElement(liveSvgEl, natural, dark) {
 }
 
 export function serializeExportSvg(svgEl) {
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(svgEl)}`;
+  // This clone went through the same cloneNode(true) as the live element
+  // mermaid-renderer.js already parsed/re-serialized once (in
+  // inlineSvgStyles()/applyModernPolish()) — ensureXlinkNamespaceDeclared()
+  // there exists precisely because that round trip can turn an <image>'s
+  // `href` into an undeclared `xlink:href` (see its own comment for the
+  // full story). This is a second, independent XMLSerializer call on that
+  // same subtree, so it needs the identical repair — otherwise a diagram
+  // whose live *preview* happens to render fine (HTML-parsed insertion
+  // tolerates the missing declaration) could still export as an invalid
+  // standalone SVG/PNG (a strict parser, or an <img> loading this file,
+  // won't).
+  const serialized = ensureXlinkNamespaceDeclared(new XMLSerializer().serializeToString(svgEl));
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${serialized}`;
 }
 
 /**

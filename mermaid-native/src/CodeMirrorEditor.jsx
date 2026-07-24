@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Spinner from './Spinner';
+import { diffRange } from './text-diff.js';
 
 let cmPromise = null;
 /** Lazily loads CodeMirror so it isn't in the main bundle — it's only ever
@@ -195,19 +196,48 @@ export default function CodeMirrorEditor({ value, onChange, onBlur, errorLine })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Syncs external value changes (e.g. switching which diagram is shown)
-  // into the already-mounted editor. Guarded on an actual diff so this
-  // doesn't fight the user's own typing: onChange already updated `value`
-  // to match what CodeMirror holds by the time this re-runs, so the
-  // common case is a same-value no-op.
-  useEffect(() => {
+  // Syncs external value changes into the already-mounted editor — not
+  // just "switching which diagram is shown" (this component doesn't even
+  // remount across that, App.jsx keys the whole diagram-card by id), but
+  // also the *same* diagram's source being edited from somewhere other
+  // than this textbox: most commonly the node-style popover's live label
+  // field or a color/border change, both of which call updateDiagram()
+  // and land here as a changed `value` prop exactly like any other write
+  // to diagram.source. Guarded on an actual diff so this doesn't fight the
+  // user's own typing: onChange already updated `value` to match what
+  // CodeMirror holds by the time this re-runs, so the common case (typing
+  // directly in this editor) is a same-value no-op.
+  //
+  // Replaces only the common-prefix/suffix-trimmed differing middle
+  // section, NOT the whole document — dispatching a full
+  // `{ from: 0, to: current.length, insert: next }` replace discards the
+  // cursor's actual position for no reason on every keystroke typed
+  // elsewhere (the popover's label field, a color drag), which is worth
+  // avoiding on its own (better undo history, no cursor churn) even though
+  // it turned out not to be the cause of the "jumps up to code" bug (see
+  // below).
+  //
+  // useLayoutEffect, not useEffect, and this is load-bearing, not just a
+  // style choice: this dispatch is what actually resizes .codemirror-editor
+  // (no max-height — see styles.css) whenever the new source wraps a line
+  // differently, and App.jsx's own useLayoutEffect (captureBoardScrollAnchor
+  // / the effect keyed on `diagrams`) depends on that resize having already
+  // happened by the time *it* runs, so it can compute .board-container's
+  // corrected scrollTop against the final, post-resize layout. React fires
+  // a child's layout effects before its parent's within the same commit,
+  // so as a useLayoutEffect this beats App.jsx's to the punch; as the
+  // plain useEffect it used to be, the resize happened *after* App.jsx had
+  // already "restored" scroll against the stale, pre-resize scrollHeight —
+  // confirmed as the actual reason that first attempt at the scroll-anchor
+  // fix didn't hold up under real re-testing.
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
     const next = value || '';
-    if (current !== next) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: next } });
-    }
+    if (current === next) return;
+
+    view.dispatch({ changes: diffRange(current, next) });
   }, [value]);
 
   // Re-highlights (or clears) the error line whenever the parse result

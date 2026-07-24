@@ -332,6 +332,10 @@ export default function App() {
   const undoTimeoutRef = useRef(null);
   const edgeUndoTimeoutRef = useRef(null);
   const latestDiagramsRef = useRef([]);
+  // .board-container (the scrollable panel) and a captured "distance from
+  // its own bottom" — see persist()'s own comment for why this exists.
+  const boardRef = useRef(null);
+  const boardScrollAnchorRef = useRef(null);
   // What we believe the server currently holds — used for optimistic
   // concurrency (see resolvers/index.js). Updated on load and after every
   // successful save; never derived from our own locally-edited diagrams.
@@ -434,6 +438,21 @@ export default function App() {
     if (!edgePopover || !edgePopoverRef.current) return;
     setEdgePopoverTop(clampPopoverTop(edgePopover.rect, edgePopoverRef.current.getBoundingClientRect().height));
   }, [edgePopover]);
+
+  // Restores the scroll anchor persist()/captureBoardScrollAnchor()
+  // captured just before this render's diagrams update — see that
+  // function's comment. useLayoutEffect, not useEffect: this has to land
+  // before the browser paints, or the un-clamped (wrong) position would
+  // flash on screen first, which is exactly the visible "jump" this is
+  // fixing. A no-op (recomputes the same scrollTop) whenever nothing
+  // actually changed size, so this doesn't need to be conditional on what
+  // kind of edit just happened.
+  useLayoutEffect(() => {
+    const board = boardRef.current;
+    if (!board || boardScrollAnchorRef.current == null) return;
+    board.scrollTop = board.scrollHeight - boardScrollAnchorRef.current;
+    boardScrollAnchorRef.current = null;
+  }, [diagrams]);
 
   // Autofocus + select-all on open, so a click immediately starts a rename/
   // relabel without an extra click into the field first.
@@ -582,7 +601,31 @@ export default function App() {
     }
   }
 
+  // Preserves the user's scroll position within .board-container across a
+  // diagram edit that changes some card's rendered height — most notably
+  // the node-style popover's label field or a color/border change, which
+  // updates diagram.source with no direct relationship to the code
+  // editor's own layout, yet .codemirror-editor has no max-height and
+  // .editor-split's align-items:stretch matches the preview pane to it, so
+  // a source edit that shifts a line's wrap point resizes the *whole*
+  // diagram card regardless of which control triggered it (confirmed with
+  // a real-browser reproduction — a headless Chrome harness replicating
+  // this exact layout, scrolled to the true bottom, showed .board-container
+  // getting a shorter scrollHeight and the browser clamping scrollTop down
+  // to match, with no focus change at all — this is the mechanism behind
+  // the reported "jumps up to the code" bug, not a CodeMirror/focus issue).
+  // Captured as "distance from the container's own bottom" (not a plain
+  // scrollTop save/restore) specifically because that's what stays
+  // constant when content shifts size at-or-below the user's current view
+  // — the common case for editing a node they scrolled down to reach.
+  function captureBoardScrollAnchor() {
+    const board = boardRef.current;
+    if (!board) return;
+    boardScrollAnchorRef.current = board.scrollHeight - board.scrollTop;
+  }
+
   function persist(next, { immediate = false } = {}) {
+    captureBoardScrollAnchor();
     setDiagrams(next);
     latestDiagramsRef.current = next;
 
@@ -1515,7 +1558,7 @@ export default function App() {
   }
 
   return (
-    <div className="board-container">
+    <div className="board-container" ref={boardRef}>
       {conflict && (
         <SectionMessage appearance="warning" title="Someone else changed these diagrams">
           <p>

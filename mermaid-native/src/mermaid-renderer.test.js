@@ -8,6 +8,7 @@ import {
   parseInlineStyleAttr,
   MERMAID_THEMES,
   isDarkMermaidTheme,
+  ensureXlinkNamespaceDeclared,
 } from './mermaid-renderer.js';
 
 test('withTheme leaves source untouched for the default theme', () => {
@@ -126,4 +127,27 @@ test('parseInlineStyleAttr ignores empty/malformed declarations', () => {
 test('parseInlineStyleAttr handles empty input', () => {
   assert.deepEqual(parseInlineStyleAttr(''), {});
   assert.deepEqual(parseInlineStyleAttr(undefined), {});
+});
+
+// Regression coverage for the C4Context rendering bug: a real browser's
+// XMLSerializer can emit an <image>'s `href` back out as the legacy
+// `xlink:href` qualified name after a parse->serialize round trip, without
+// ever declaring the xmlns:xlink namespace that qualified name needs — see
+// reserializeWithXlinkNamespace()'s own comment in mermaid-renderer.js for
+// why this can't be reproduced/verified end-to-end under jsdom.
+test('ensureXlinkNamespaceDeclared adds the missing declaration when xlink: is used but undeclared', () => {
+  const input = '<svg><image href="x" xlink:href="data:image/png;base64,AAA"/></svg>';
+  const result = ensureXlinkNamespaceDeclared(input);
+  assert.match(result, /^<svg xmlns:xlink="http:\/\/www\.w3\.org\/1999\/xlink">/);
+  assert.match(result, /xlink:href="data:image\/png;base64,AAA"/);
+});
+
+test('ensureXlinkNamespaceDeclared leaves the string untouched when xlink: is already declared', () => {
+  const input = '<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="x"/></svg>';
+  assert.equal(ensureXlinkNamespaceDeclared(input), input);
+});
+
+test('ensureXlinkNamespaceDeclared leaves the string untouched when no xlink: attribute is present', () => {
+  const input = '<svg><image href="x"/></svg>';
+  assert.equal(ensureXlinkNamespaceDeclared(input), input);
 });
