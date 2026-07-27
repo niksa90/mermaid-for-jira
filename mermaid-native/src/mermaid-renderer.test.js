@@ -19,8 +19,25 @@ test('withTheme leaves source untouched for the default theme', () => {
 
 test('withTheme prepends an init directive for non-default themes', () => {
   const source = 'flowchart TD\n  A --> B';
+  const themed = withTheme(source, 'neutral');
+  assert.match(themed, /^%%\{init: \{"theme": "neutral"\}\}%%\n/);
+  assert.match(themed, /flowchart TD/);
+});
+
+test('withTheme expands "dark" into an init directive with a mainBkg override', () => {
+  // Mermaid's built-in 'dark' theme ships mainBkg: '#1f2020' for node fill —
+  // confirmed via a real render to be nearly indistinguishable in luminance
+  // from this app's own dark canvas backdrop (styles.css's
+  // .diagram-canvas-wrap[data-surface='dark'], #22272b), so node "cards"
+  // read as almost invisible against it. Overriding just mainBkg keeps
+  // 'dark''s own text/stroke/edge colors untouched — same "keep the
+  // built-in theme, override one variable" mechanism 'brand' uses.
+  const source = 'flowchart TD\n  A --> B';
   const themed = withTheme(source, 'dark');
-  assert.match(themed, /^%%\{init: \{"theme": "dark"\}\}%%\n/);
+  const initJson = themed.match(/^%%\{init: (.+)\}%%\n/)[1];
+  const init = JSON.parse(initJson);
+  assert.equal(init.theme, 'dark');
+  assert.ok(init.themeVariables.mainBkg);
   assert.match(themed, /flowchart TD/);
 });
 

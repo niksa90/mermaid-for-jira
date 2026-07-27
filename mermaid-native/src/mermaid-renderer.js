@@ -89,6 +89,27 @@ const BRAND_THEME_VARIABLES = {
 // fully reskins sequence diagrams until this is re-checked in a real
 // browser or against a different themeVariables key.
 
+// Mermaid's built-in 'dark' theme ships mainBkg: '#1f2020' for node fill —
+// confirmed via a real render (see the 'dark' branch below): almost
+// indistinguishable in luminance from this app's own dark canvas backdrop
+// (styles.css's `.diagram-canvas-wrap[data-surface='dark']`, #22272b, which
+// diagram-export.js's EXPORT_SURFACE_COLOR.dark mirrors for exports — see
+// isDarkMermaidTheme). Confirmed via a real browser screenshot: node "cards"
+// read as almost invisible, only their border/text standing out, against
+// that backdrop — the shadow/rounded-corner "card" look applyModernPolish()
+// adds is effectively wasted since there's no visible card to show it on.
+// Mermaid itself never renders anything from its own theme.background
+// variable (this app paints its own backdrop instead, independently), so
+// there's no "the theme's own bg" to fall back to matching — only this
+// app's chosen canvas color, which was picked for the app's chrome, not for
+// this specific theme's node color. Overriding just mainBkg (the only
+// variable node fill actually reads — confirmed by rendering with a
+// throwaway mainBkg value and diffing the emitted <style> block) keeps
+// everything else about Mermaid's own 'dark' theme (text/stroke/edge
+// colors) untouched, the same "keep the built-in theme, override one
+// variable" mechanism 'brand' already uses for its own palette.
+const DARK_THEME_VARIABLES = { mainBkg: '#2d333b' };
+
 /**
  * Prepends a Mermaid init directive so a diagram can pick its own theme
  * without touching mermaid.initialize()'s global config — global re-init
@@ -103,6 +124,10 @@ export function withTheme(source, theme) {
       fontFamily: BRAND_FONT_FAMILY,
       themeVariables: BRAND_THEME_VARIABLES,
     };
+    return `%%{init: ${JSON.stringify(init)}}%%\n${trimmed}`;
+  }
+  if (theme === 'dark') {
+    const init = { theme: 'dark', themeVariables: DARK_THEME_VARIABLES };
     return `%%{init: ${JSON.stringify(init)}}%%\n${trimmed}`;
   }
   return `%%{init: {"theme": "${theme}"}}%%\n${trimmed}`;

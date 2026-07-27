@@ -36,6 +36,106 @@ export function buildExportSvgElement(liveSvgEl, natural, dark) {
   clone.querySelectorAll('[data-hit-clone]').forEach((el) => el.remove());
   clone.querySelectorAll('.node-style-selected').forEach((el) => el.classList.remove('node-style-selected'));
 
+  // Every node's `<g class="label">` wraps a couple of Mermaid-internal
+  // bookkeeping <rect>s (an unclassed one and one with class="background")
+  // left over from Mermaid's HTML-label code path — meaningless here since
+  // this app forces htmlLabels:false everywhere, so neither ever carries a
+  // width/height attribute (every *real* shape rect always has both).
+  // inlineSvgStyles()'s ".node rect" class-rule pass and
+  // applyModernPolish()'s node-rounding pass both match these placeholders
+  // too, baking real fill/stroke/rx/filter onto them. Spec-compliant
+  // renderers default the missing width/height to 0 and draw nothing either
+  // way, so this is inert in Chrome and in librsvg — confirmed harmless,
+  // not just untested — but ImageMagick on a box built `--without-rsvg`
+  // (falling back to its own bundled MSVG coder) does not default them to
+  // 0, so every node rendered as a solid, offset "ghost" duplicate there.
+  // Cheap, safe hygiene to strip regardless of how common that specific
+  // ImageMagick configuration actually is among users opening this file.
+  clone.querySelectorAll('rect').forEach((el) => {
+    if (!el.hasAttribute('width') && !el.hasAttribute('height')) {
+      el.remove();
+    }
+  });
+
+  // Mermaid splits a wrapped label's text into sibling `text-inner-tspan`
+  // elements with no gap between the closing/opening tags
+  // ("...only</tspan><tspan> history...") and relies on the *browser's*
+  // default `xml:space` handling to keep a lone leading/trailing space
+  // meaningful inside a tspan's text content. Confirmed via a real render
+  // that librsvg (what gdk-pixbuf-based thumbnailers/viewers use, and a
+  // reasonable stand-in for "most non-browser SVG viewers") trims that
+  // space instead, silently joining adjacent words ("Language:English").
+  // `xml:space="preserve"` on the root `<text>` inherits to every tspan
+  // inside it and fixes this — confirmed with the same before/after
+  // comparison, no effect on Chrome's rendering (which already preserved
+  // the space by default).
+  clone.querySelectorAll('text').forEach((el) => {
+    el.setAttribute('xml:space', 'preserve');
+  });
+
+  // applyModernPolish() (mermaid-renderer.js) gives every node/actor shape a
+  // drop shadow via a single `<feDropShadow>` filter primitive, and every
+  // node rect/polygon references it. Confirmed via a real render (this
+  // system's librsvg — via gdk-pixbuf-thumbnailer, the rendering path
+  // GNOME's image viewers use — plus a user screenshot from GNOME's Loupe
+  // showing the same result): when an SVG filter can't be applied, these
+  // engines don't just drop the shadow effect, they render *nothing* for
+  // the whole element referencing it — every node came out as floating
+  // text with no box, fill, or border at all, confirmed by removing the
+  // `filter` attribute and seeing the node reappear. `feDropShadow` is a
+  // fairly recent shorthand (SVG Filter Effects Module) that this
+  // installation's librsvg doesn't support; Chrome does, so the live in-app
+  // preview (always a real browser) is unaffected — this is export-only,
+  // like the font-family fix below. Rebuilt using the older, universally
+  // supported filter-primitive combination (feGaussianBlur + feOffset +
+  // feComponentTransfer for the opacity + feMerge) that produces the same
+  // visual result — confirmed via the same real-render comparison, both in
+  // a browser (unchanged) and under librsvg (now renders instead of
+  // disappearing).
+  clone.querySelectorAll('filter').forEach((filterEl) => {
+    const dropShadow = filterEl.querySelector('feDropShadow');
+    if (!dropShadow) return;
+    const dx = dropShadow.getAttribute('dx') || '0';
+    const dy = dropShadow.getAttribute('dy') || '0';
+    const stdDeviation = dropShadow.getAttribute('stdDeviation') || '0';
+    const floodOpacity = dropShadow.getAttribute('flood-opacity') || '1';
+    const doc = filterEl.ownerDocument;
+    const svgNs = 'http://www.w3.org/2000/svg';
+    filterEl.removeChild(dropShadow);
+
+    const blur = doc.createElementNS(svgNs, 'feGaussianBlur');
+    blur.setAttribute('in', 'SourceAlpha');
+    blur.setAttribute('stdDeviation', stdDeviation);
+    blur.setAttribute('result', 'blur');
+
+    const offset = doc.createElementNS(svgNs, 'feOffset');
+    offset.setAttribute('in', 'blur');
+    offset.setAttribute('dx', dx);
+    offset.setAttribute('dy', dy);
+    offset.setAttribute('result', 'offsetBlur');
+
+    const transfer = doc.createElementNS(svgNs, 'feComponentTransfer');
+    transfer.setAttribute('in', 'offsetBlur');
+    transfer.setAttribute('result', 'shadow');
+    const funcA = doc.createElementNS(svgNs, 'feFuncA');
+    funcA.setAttribute('type', 'linear');
+    funcA.setAttribute('slope', floodOpacity);
+    transfer.appendChild(funcA);
+
+    const merge = doc.createElementNS(svgNs, 'feMerge');
+    const mergeShadow = doc.createElementNS(svgNs, 'feMergeNode');
+    mergeShadow.setAttribute('in', 'shadow');
+    const mergeSource = doc.createElementNS(svgNs, 'feMergeNode');
+    mergeSource.setAttribute('in', 'SourceGraphic');
+    merge.appendChild(mergeShadow);
+    merge.appendChild(mergeSource);
+
+    filterEl.appendChild(blur);
+    filterEl.appendChild(offset);
+    filterEl.appendChild(transfer);
+    filterEl.appendChild(merge);
+  });
+
   // Confirmed via a real render (headless Chrome vs. ImageMagick's SVG
   // delegate on the exact same file): Mermaid's/applyModernPolish()'s
   // font-family value — '"Inter", -apple-system, BlinkMacSystemFont,
